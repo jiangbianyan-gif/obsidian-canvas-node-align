@@ -3,6 +3,54 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.2.0 — 2026-09-29
+
+**Vertical alignment.** Until now the plugin only controlled where a line of
+text starts and ends (horizontal). The vertical position was whatever Obsidian
+did by default — always pinned to the top of the card. Both axes are now
+independent, so they combine freely: 4 horizontal × 3 vertical = 12 positions.
+
+**Added**
+
+- Vertical position for card bodies: **top / middle / bottom**, set from
+  <kbd>right-click a card</kbd> → *Card text alignment · vertical*, or from the
+  command palette (`Card text vertical: …`). Applies per card, or to every card
+  on the canvas at once.
+- Cards that embed a note, a web page or media cannot carry a text marker
+  (the content belongs to another file), so their vertical position is stored
+  in the plugin's data file instead and applied as a runtime class name.
+- New setting: **default vertical position for card bodies**, so cards you have
+  never touched follow it automatically.
+- New setting: **stretch the last line when justifying**. Per typographic
+  convention `justify` does *not* stretch the final line, which makes it look
+  identical to left-alignment when the text is a single sentence — a very
+  common case with Chinese text. Turning this on stretches that line too.
+- Horizontal alignment now also applies while a card is being edited
+  (CodeMirror 6), not only in the rendered view.
+- 51 more unit tests (65 → 116), including a regression test that setting one
+  axis never wipes the other axis's marker, and CSS guards that fail the build
+  if a vertical selector loses the specificity needed to beat Obsidian's own
+  stylesheet.
+
+**Changed**
+
+- Menu entries are now split into *Card text alignment · horizontal* and
+  *Card text alignment · vertical* instead of one combined submenu.
+- The card marker format gained a second, independent marker for the vertical
+  axis: `<span class="cta-vt"></span>` / `-vm` / `-vb` (tag spellings `#cta-vt`
+  and so on). Existing cards keep working — a card with only a horizontal
+  marker simply follows the default vertical position.
+
+**Notes**
+
+- Vertical alignment is deliberately not applied while a card is being edited:
+  keeping the caret pinned to the top is less jarring than text that jumps
+  around the card as you type.
+- When the text is taller than the card, all three vertical positions fall back
+  to the same top-anchored, scrollable layout. Nothing is clipped or lost —
+  this is why the implementation changes `flex-grow` on Obsidian's spacer
+  pseudo-elements rather than using `justify-content: center`.
+
 ## 2.1.0 — 2026-09-29
 
 Housekeeping release that clears the warnings from the community directory's

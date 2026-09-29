@@ -6,14 +6,33 @@
    ----------------------------------------------------------------------------
    设计原则：插件只负责「写字 / 挂类名」，渲染一律交给 CSS。
 
-   覆盖白板里全部 6 处文字位置：
+   ★ 对齐有两个方向，互相独立，可任意组合（4 × 3 = 12 种）：
+       水平  →  text-align，left | center | right | justify
+       垂直  →  由弹性占位块决定，top | middle | bottom
+     两个方向各记各的标记、各挂各的类名，互不干扰。
+
+   ★ 垂直是怎么实现的？（改之前务必看懂，CSS 那段有详细推导）
+     Obsidian 原生的卡片正文是这样搭的：
+       .markdown-preview-view            display:flex; flex-direction:column
+         ├ ::before   弹性占位块  flex:1 1 0; max-height:16px
+         ├ .markdown-preview-sizer  正文  flex:1 0 0
+         └ ::after    弹性占位块  同上
+     两个占位块被 16px 上限卡死，剩余高度全被正文块吃掉 ⇒ 永远贴顶。
+     所以垂直对齐只要调这两个占位块的 flex-grow / max-height 即可，
+     全部由 CSS 完成，插件这边只负责挂 cta-v-* 类名。
+
+   覆盖白板里全部文字位置：
      ① 文本卡正文          → 逐张：写标记 <span class="cta-c"></span>
+                             <span class="cta-vt"></span>（垂直同理）
      ② 卡片内嵌笔记的正文   → 设置面板全局
      ③ 卡片文件名标签       → 逐张（运行时挂类名）+ 设置面板全局
      ④ 分组标签            → 逐组（运行时挂类名）+ 设置面板全局
      ⑤ 连线标签            → 逐条（运行时挂类名）+ 设置面板全局
      ⑥ 卡片内的 callout/标题/代码块 → 随 ① 走（CSS 处理）
-   另外还给 Markdown 笔记正文提供对齐（原生没有此功能）。
+     ⑦ 嵌入笔记 / 网页的卡片正文 → 垂直方向逐张（运行时挂类名）
+        ★ 这类卡片的内容是**别人的文件**，不能往里面写标记，所以改挂类名，
+          状态记在插件自己的 data.json 里。
+     另外还给 Markdown 笔记正文提供水平对齐（原生没有此功能）。
 
    ★ 为什么不统一都用「写标记」？
      文本卡走 Markdown 渲染器，HTML 会生效；而分组标签和连线标签由
@@ -22,7 +41,7 @@
 
    ★ 数据落在哪？
      ① 写在卡片文字里（.canvas 仍是标准格式，卸载插件效果仍在）
-     ③④⑤ 记在插件自己的 data.json 里（不碰 .canvas）
+     ③④⑤⑦ 记在插件自己的 data.json 里（不碰 .canvas）
            代价：卸载插件后这几项的对齐会失效。
 
    本插件用到的 Obsidian 内部接口（已在 1.13.7 上逐条核实）：
@@ -46,7 +65,7 @@ const { Plugin, PluginSettingTab, Setting, Notice, Menu } = require('obsidian');
 
 /* ══════════════════════════════════════════════════════════ 常量表 */
 
-// 四种对齐方式。letter 用于卡片里的标记，cls 用于运行时挂的类名后缀。
+// 四个水平对齐。letter 用于卡片里的标记，cls 用于运行时挂的类名后缀。
 const ALIGNS = [
   { key: 'left',    letter: 'l', label: '左对齐',   icon: 'align-left' },
   { key: 'center',  letter: 'c', label: '居中',     icon: 'align-center' },
@@ -56,6 +75,17 @@ const ALIGNS = [
 const ALIGN_KEYS = ALIGNS.map(function (a) { return a.key; });
 const ALIGN_BY_KEY = {};
 ALIGNS.forEach(function (a) { ALIGN_BY_KEY[a.key] = a; });
+
+// 三个垂直位置。letter 同样是 't'|'m'|'b'，标记写作 cta-vt / cta-vm / cta-vb。
+// ★ 前缀里那个 v 是必需的：没有它就分不清 cta-t（垂直顶）和水平标记的字母。
+// 图标名已对着 obsidian.asar 自带的那一套逐个核实过。
+const VALIGNS = [
+  { key: 'top',    letter: 't', label: '顶部',     icon: 'arrow-up-to-line' },
+  { key: 'middle', letter: 'm', label: '垂直居中', icon: 'align-vertical-justify-center' },
+  { key: 'bottom', letter: 'b', label: '底部',     icon: 'arrow-down-to-line' }
+];
+const VALIGN_BY_KEY = {};
+VALIGNS.forEach(function (a) { VALIGN_BY_KEY[a.key] = a; });
 
 // 设置面板能设的五个位置，键名顺序即面板顺序
 const TARGETS = [
@@ -67,16 +97,24 @@ const TARGETS = [
 ];
 
 // 出厂默认值。（note 的 inherit = 跟随所在卡片，见文件末尾说明）
+// cardV = 没写垂直标记的卡片统一用哪个垂直位置；justifyLast = 见设置面板说明。
 const DEFAULT_SETTINGS = {
   defaults: { card: 'left', note: 'inherit', label: 'left', group: 'center', path: 'center' },
-  perItem: {}            // { "<canvas路径>": { "g:<nodeId>": "center", "e:<edgeId>": "right" } }
+  cardV: 'top',
+  justifyLast: false,
+  perItem: {}   // { "<canvas路径>": { "g:<nodeId>":"center", "e:<edgeId>":"right",
+                //                    "n:<nodeId>":"left",   "v:<nodeId>":"middle" } }
 };
 
 // 运行时挂的类名前缀（CSS 里一一对应）
-const CARD_CLS   = 'cta-card-';    // 挂在卡片元素（.canvas-node）上
+const CARD_CLS   = 'cta-card-';    // 水平，挂在卡片元素（.canvas-node）上
+const VCARD_CLS  = 'cta-v-';       // 垂直，同样挂在 .canvas-node 上
 const GROUP_CLS  = 'cta-group-';
 const PATH_CLS   = 'cta-path-';
 const NLABEL_CLS = 'cta-nlabel-';
+
+// 「两端对齐时最后一行也拉满」打开时，挂在 body 上的类名
+const JUSTIFY_LAST_CLS = 'cta-justify-last';
 
 // 笔记正文对齐用的 frontmatter 类名前缀
 const NOTE_CLS = 'cta-note-';
@@ -86,40 +124,79 @@ const NOTE_CLS = 'cta-note-';
 
 /* ---------- A. 卡片正文标记的读写 ---------- */
 
-// 两种写法都认：<span class="cta-x"></span>  和  #cta-x
-const MARK_ALL  = /[ \t]*<span class="cta-[lcrj]"><\/span>/g;
-const TAG_ALL   = /[ \t]*#cta-[lcrj]\b/g;
-const MARK_ONE  = /<span class="cta-([lcrj])"><\/span>/;
-const TAG_ONE   = /(?:^|\s)#cta-([lcrj])\b/;
-const LETTER2KEY = { l: 'left', c: 'center', r: 'right', j: 'justify' };
+/* 两个方向各记各的标记，互不干扰（这是能自由组合的关键）：
+     水平  <span class="cta-l"></span>  或  #cta-l      l | c | r | j
+     垂直  <span class="cta-vt"></span> 或  #cta-vt     t | m | b
 
-// 这张卡片当前用的是哪种对齐？没有标记返回 null（表示跟随全局默认）。
+   ★ 正则里 [lcrj] 与 v[tmb] 不会互相误伤：cta-vt 的第三段是 'v'，
+     不在 [lcrj] 里；反过来 cta-l 缺 v 前缀。改动时务必保持这两个字符集互斥。 */
+
+// 水平
+const H_MARK_ALL = /[ \t]*<span class="cta-[lcrj]"><\/span>/g;
+const H_TAG_ALL  = /[ \t]*#cta-[lcrj]\b/g;
+const H_MARK_ONE = /<span class="cta-([lcrj])"><\/span>/;
+const H_TAG_ONE  = /(?:^|\s)#cta-([lcrj])\b/;
+// 垂直
+const V_MARK_ALL = /[ \t]*<span class="cta-v([tmb])"><\/span>/g;
+const V_TAG_ALL  = /[ \t]*#cta-v[tmb]\b/g;
+const V_MARK_ONE = /<span class="cta-v([tmb])"><\/span>/;
+const V_TAG_ONE  = /(?:^|\s)#cta-v([tmb])\b/;
+
+const LETTER2KEY = { l: 'left', c: 'center', r: 'right', j: 'justify' };
+const VLETTER2KEY = { t: 'top', m: 'middle', b: 'bottom' };
+
+// 这张卡片当前用的是哪种水平对齐？没有标记返回 null（表示跟随全局默认）。
 function readAlign(text) {
   const t = String(text == null ? '' : text);
-  const m = MARK_ONE.exec(t) || TAG_ONE.exec(t);
+  const m = H_MARK_ONE.exec(t) || H_TAG_ONE.exec(t);
   return m ? (LETTER2KEY[m[1]] || null) : null;
 }
 
-// 抹掉卡片文字里所有对齐标记，其余内容一字不动。
-function stripMarks(text) {
-  return String(text == null ? '' : text).replace(MARK_ALL, '').replace(TAG_ALL, '');
+// 垂直位置。同上，没标记返回 null。
+function readVAlign(text) {
+  const t = String(text == null ? '' : text);
+  const m = V_MARK_ONE.exec(t) || V_TAG_ONE.exec(t);
+  return m ? (VLETTER2KEY[m[1]] || null) : null;
 }
 
-// 生成「已设置成 mode 对齐」的卡片文字；mode 传 null 表示清除标记。
-function withAlign(text, mode) {
-  const base = stripMarks(text);
-  if (!mode) return base;
-  const a = ALIGN_BY_KEY[mode];
-  if (!a) return base;
+// 抹掉卡片文字里**所有**对齐标记（两个方向一起），其余内容一字不动。
+function stripMarks(text) {
+  return String(text == null ? '' : text)
+    .replace(H_MARK_ALL, '').replace(H_TAG_ALL, '')
+    .replace(V_MARK_ALL, '').replace(V_TAG_ALL, '');
+}
 
-  const mark = '<span class="cta-' + a.letter + '"></span>';
-
-  // 插在**第一行末尾**：插行首会打断 "- 列表"、"# 标题" 这类块级语法。
-  // 用 /\r?\n/ 定位是为了兼容 Windows 换行 —— 否则标记会被塞进 \r 和 \n
-  // 中间，渲染时多出一个空行。
+// 把标记插在**第一行末尾**。
+// 插行首会打断 "- 列表"、"# 标题" 这类块级语法；用 /\r?\n/ 定位是为了兼容
+// Windows 换行 —— 否则标记会被塞进 \r 和 \n 中间，渲染时多出一个空行。
+function insertAtFirstLineEnd(base, mark) {
   const m = /\r?\n/.exec(base);
   if (!m) return base + mark;
   return base.slice(0, m.index) + mark + base.slice(m.index);
+}
+
+/* 生成「已设置成 mode 对齐」的卡片文字；mode 传 null 表示清除该方向的标记。
+
+   ★ 关键：**只动自己那个方向**。withAlign 绝不能顺手把垂直标记也抹掉，
+     否则用户设一次水平对齐，垂直位置就被打回默认了。所以两边各自
+     「先摘掉本方向的旧标记 → 再插入新标记」，另一半原样保留。 */
+
+function withAlign(text, mode) {
+  const base = String(text == null ? '' : text)
+    .replace(H_MARK_ALL, '').replace(H_TAG_ALL, '');
+  if (!mode) return base;
+  const a = ALIGN_BY_KEY[mode];
+  if (!a) return base;
+  return insertAtFirstLineEnd(base, '<span class="cta-' + a.letter + '"></span>');
+}
+
+function withVAlign(text, mode) {
+  const base = String(text == null ? '' : text)
+    .replace(V_MARK_ALL, '').replace(V_TAG_ALL, '');
+  if (!mode) return base;
+  const a = VALIGN_BY_KEY[mode];
+  if (!a) return base;
+  return insertAtFirstLineEnd(base, '<span class="cta-v' + a.letter + '"></span>');
 }
 
 /* ---------- B. 运行时类名的清理 ---------- */
@@ -193,7 +270,7 @@ class CanvasNodeAlignSettingTab extends PluginSettingTab {
       cls: 'setting-item-description'
     });
 
-    containerEl.createEl('h3', { text: '各处文字的默认对齐' });
+    containerEl.createEl('h3', { text: '各处文字的默认对齐（水平）' });
     containerEl.createEl('p', {
       text: '这里管的是「没有单独设置过」的地方。改完立即生效，不需要重启。',
       cls: 'setting-item-description'
@@ -216,10 +293,49 @@ class CanvasNodeAlignSettingTab extends PluginSettingTab {
         });
     });
 
+    containerEl.createEl('h3', { text: '卡片的默认垂直位置' });
+    containerEl.createEl('p', {
+      text: '只有「卡片正文」需要垂直方向 —— 文件名标签、分组标签、连线标签都是单行，' +
+            '高度本来就贴着文字，没有可移动的余量。',
+      cls: 'setting-item-description'
+    });
+
+    new Setting(containerEl)
+      .setName('卡片正文')
+      .setDesc('卡片比文字高出一截时，正文落在哪个高度。逐张设置时用右键菜单 →' +
+               '「卡片文字对齐 · 垂直」，这里只是没单独设置过的卡片的默认值。')
+      .addDropdown(function (dd) {
+        VALIGNS.forEach(function (a) { dd.addOption(a.key, a.label); });
+        dd.setValue(p.settings.cardV || DEFAULT_SETTINGS.cardV);
+        dd.onChange(async function (v) {
+          p.settings.cardV = v;
+          // 没写垂直标记的卡片靠类名落地，改完必须整块重挂一遍
+          p.reapplyAll();
+          await p.saveSettings();
+        });
+      });
+
+    containerEl.createEl('h3', { text: '两端对齐的细节' });
+
+    new Setting(containerEl)
+      .setName('两端对齐时，最后一行也拉满')
+      .setDesc('按排版规范，两端对齐**不拉伸最后一行**。中文短句常常只有一行，' +
+               '于是设了两端对齐看起来和左对齐一模一样 —— 不是没生效，是没有可拉伸的行。' +
+               '打开这个开关就会连最后一行一起拉满，短句也能立刻看出差别。' +
+               '（英文长段落默认效果已经很明显，一般不用开。）')
+      .addToggle(function (tg) {
+        tg.setValue(!!p.settings.justifyLast);
+        tg.onChange(async function (v) {
+          p.settings.justifyLast = v;
+          p.applyBodyClasses();
+          await p.saveSettings();
+        });
+      });
+
     containerEl.createEl('h3', { text: '逐张 / 逐组 / 逐条设置' });
 
     const tips = containerEl.createEl('div', { cls: 'setting-item-description' });
-    tips.createEl('p', { text: '· 卡片正文：右键卡片 →「卡片文字对齐」' });
+    tips.createEl('p', { text: '· 卡片正文水平 / 垂直：右键卡片 →「卡片文字对齐 · 水平 / 垂直」' });
     tips.createEl('p', { text: '· 分组标签 / 连线标签 / 文件名标签：右键 →「标签对齐」' });
     tips.createEl('p', {
       text: '这些单独设置记在本插件的数据文件里，不会写进 .canvas（所以白板文件依旧是标准格式）。'
@@ -265,6 +381,7 @@ module.exports = class CanvasNodeAlign extends Plugin {
     this.saveSettings();
 
     this.applyDefaults();
+    this.applyBodyClasses();
     this.registerCanvasMenus();
     this.registerCommands();
 
@@ -284,6 +401,7 @@ module.exports = class CanvasNodeAlign extends Plugin {
     TARGETS.forEach(function (t) {
       document.body.style.removeProperty(t.cssVar);
     });
+    document.body.classList.remove(JUSTIFY_LAST_CLS);
   }
 
 
@@ -316,6 +434,12 @@ module.exports = class CanvasNodeAlign extends Plugin {
     });
   }
 
+  // 挂在 body 上的开关类名。目前只有一个：两端对齐是否拉满最后一行。
+  // 用 body 类名而不是逐个卡片挂，是因为这是「全局排版口味」，不是逐张设置。
+  applyBodyClasses() {
+    document.body.classList.toggle(JUSTIFY_LAST_CLS, !!this.settings.justifyLast);
+  }
+
 
   /* ─────────────────────────────────────────────── 右键菜单 */
 
@@ -326,11 +450,24 @@ module.exports = class CanvasNodeAlign extends Plugin {
         if (!node || !node.canvas || node.canvas.readonly) return;
 
         if (isTextNode(node)) {
-          // ① 卡片正文 —— 靠标记，逐张
-          this.addAlignGroup(menu, '卡片文字对齐', 'align-left',
+          // ① 卡片正文水平 —— 靠标记，逐张
+          this.addAlignGroup(menu, '卡片文字对齐 · 水平', 'align-left',
             (key) => this.applyToNodes([node], key));
+          // 垂直同理，另一个标记、另一条路
+          this.addVAlignGroup(menu, '卡片文字对齐 · 垂直',
+            (key) => this.applyToNodesV([node], key));
 
           // ③ 卡片文件名标签 —— 靠类名，逐张
+          if (node.labelEl) {
+            this.addAlignGroup(menu, '文件名标签对齐', 'text-cursor-input',
+              (key) => this.setItemAlign(node.canvas, 'label', node, key, NLABEL_CLS));
+          }
+        } else if (isAlignableCard(node)) {
+          // ⑦ 嵌入笔记 / 网页的卡片：内容是别人的文件，写不了标记 ⇒ 只挂类名，
+          //    状态记在插件数据里（和标签那几处同一个机制）。
+          this.addVAlignGroup(menu, '卡片文字对齐 · 垂直',
+            (key) => this.setItemAlign(node.canvas, 'vcard', node, key, VCARD_CLS));
+
           if (node.labelEl) {
             this.addAlignGroup(menu, '文件名标签对齐', 'text-cursor-input',
               (key) => this.setItemAlign(node.canvas, 'label', node, key, NLABEL_CLS));
@@ -354,8 +491,10 @@ module.exports = class CanvasNodeAlign extends Plugin {
       this.app.workspace.on('canvas:selection-menu', (menu, canvas) => {
         const nodes = this.textNodesOf(canvas);
         if (!nodes.length) return;
-        this.addAlignGroup(menu, '卡片文字对齐（' + nodes.length + ' 张）', 'align-left',
+        this.addAlignGroup(menu, '卡片文字对齐 · 水平（' + nodes.length + ' 张）', 'align-left',
           (key) => this.applyToNodes(nodes, key));
+        this.addVAlignGroup(menu, '卡片文字对齐 · 垂直（' + nodes.length + ' 张）',
+          (key) => this.applyToNodesV(nodes, key));
       })
     );
 
@@ -370,7 +509,7 @@ module.exports = class CanvasNodeAlign extends Plugin {
     );
   }
 
-  // 在菜单里加一组对齐项：优先收进子菜单；当前版本没有 setSubmenu 时平铺。
+  // 在菜单里加一组「水平对齐」：优先收进子菜单；当前版本没有 setSubmenu 时平铺。
   addAlignGroup(menu, title, icon, handler) {
     if (this.useSubmenu) {
       menu.addItem((item) => {
@@ -379,6 +518,18 @@ module.exports = class CanvasNodeAlign extends Plugin {
       });
     } else {
       this.fillAlignItems(menu, handler, title);
+    }
+  }
+
+  // 在菜单里加一组「垂直对齐」。选项少（3 个），所以不接收 icon 参数。
+  addVAlignGroup(menu, title, handler) {
+    if (this.useSubmenu) {
+      menu.addItem((item) => {
+        item.setTitle(title).setIcon('arrow-up-down').setSection('action');
+        this.fillVAlignItems(item.setSubmenu(), handler);
+      });
+    } else {
+      this.fillVAlignItems(menu, handler, title);
     }
   }
 
@@ -398,15 +549,31 @@ module.exports = class CanvasNodeAlign extends Plugin {
     });
   }
 
+  // 铺开 3 种垂直位置 + 1 项清除。
+  fillVAlignItems(menu, handler, section) {
+    VALIGNS.forEach((a) => {
+      menu.addItem((item) => {
+        item.setTitle(a.label).setIcon(a.icon);
+        if (section) item.setSection(section);
+        item.onClick(() => handler(a.key));
+      });
+    });
+    menu.addItem((item) => {
+      item.setTitle('清除（跟随默认）').setIcon('remove-formatting');
+      if (section) item.setSection(section);
+      item.onClick(() => handler(null));
+    });
+  }
+
 
   /* ─────────────────────────────────────────────── 命令面板 */
 
   registerCommands() {
-    // 单张卡片的四种对齐 + 清除
+    // 单张卡片的四种水平 + 清除
     ALIGNS.forEach((a) => {
       this.addCommand({
         id: 'align-' + a.key,
-        name: '卡片文字：' + a.label,
+        name: '卡片文字水平：' + a.label,
         checkCallback: (checking) => {
           const nodes = this.selectedTextNodes();
           if (!nodes.length) return false;
@@ -418,7 +585,7 @@ module.exports = class CanvasNodeAlign extends Plugin {
 
     this.addCommand({
       id: 'align-clear',
-      name: '卡片文字：清除对齐（跟随默认）',
+      name: '卡片文字水平：清除对齐（跟随默认）',
       checkCallback: (checking) => {
         const nodes = this.selectedTextNodes();
         if (!nodes.length) return false;
@@ -427,11 +594,36 @@ module.exports = class CanvasNodeAlign extends Plugin {
       }
     });
 
+    // 单张卡片的三种垂直 + 清除
+    VALIGNS.forEach((a) => {
+      this.addCommand({
+        id: 'valign-' + a.key,
+        name: '卡片文字垂直：' + a.label,
+        checkCallback: (checking) => {
+          const nodes = this.selectedTextNodes();
+          if (!nodes.length) return false;
+          if (!checking) this.applyToNodesV(nodes, a.key);
+          return true;
+        }
+      });
+    });
+
+    this.addCommand({
+      id: 'valign-clear',
+      name: '卡片文字垂直：清除对齐（跟随默认）',
+      checkCallback: (checking) => {
+        const nodes = this.selectedTextNodes();
+        if (!nodes.length) return false;
+        if (!checking) this.applyToNodesV(nodes, null);
+        return true;
+      }
+    });
+
     // 整块白板统一
     ALIGNS.forEach((a) => {
       this.addCommand({
         id: 'canvas-all-' + a.key,
-        name: '整块白板：所有卡片' + a.label,
+        name: '整块白板：所有卡片水平' + a.label,
         checkCallback: (checking) => {
           const view = this.activeCanvasView();
           if (!view) return false;
@@ -443,7 +635,7 @@ module.exports = class CanvasNodeAlign extends Plugin {
 
     this.addCommand({
       id: 'canvas-all-clear',
-      name: '整块白板：所有卡片清除对齐',
+      name: '整块白板：所有卡片清除水平对齐',
       checkCallback: (checking) => {
         const view = this.activeCanvasView();
         if (!view) return false;
@@ -452,7 +644,31 @@ module.exports = class CanvasNodeAlign extends Plugin {
       }
     });
 
-    // 笔记正文对齐
+    VALIGNS.forEach((a) => {
+      this.addCommand({
+        id: 'canvas-all-valign-' + a.key,
+        name: '整块白板：所有卡片' + a.label,
+        checkCallback: (checking) => {
+          const view = this.activeCanvasView();
+          if (!view) return false;
+          if (!checking) this.applyToNodesV(this.textNodesOf(view.canvas), a.key);
+          return true;
+        }
+      });
+    });
+
+    this.addCommand({
+      id: 'canvas-all-valign-clear',
+      name: '整块白板：所有卡片清除垂直对齐',
+      checkCallback: (checking) => {
+        const view = this.activeCanvasView();
+        if (!view) return false;
+        if (!checking) this.applyToNodesV(this.textNodesOf(view.canvas), null);
+        return true;
+      }
+    });
+
+    // 笔记正文对齐（只有水平 —— 整篇笔记的垂直居中意义不大，而且长文会很怪）
     ALIGNS.forEach((a) => {
       this.addCommand({
         id: 'note-' + a.key,
@@ -510,12 +726,16 @@ module.exports = class CanvasNodeAlign extends Plugin {
     const view = this.activeCanvasView();
     const cards = view ? this.textNodesOf(view.canvas).length : -1;
 
-    // 真挂了运行时类名的卡片有几张（新的渲染机制就是靠它，必须能看到）
+    // 真挂了运行时类名的卡片有几张（整个渲染机制就是靠它，必须能看到）
     let cardCls = -1;
+    let vCls = -1;
     if (view && view.canvas && view.canvas.nodes && typeof view.canvas.nodes.forEach === 'function') {
       cardCls = 0;
+      vCls = 0;
       view.canvas.nodes.forEach((n) => {
-        if (n && n.nodeEl && readAlignClass(n.nodeEl, [CARD_CLS])) cardCls++;
+        if (!n || !n.nodeEl) return;
+        if (readAlignClass(n.nodeEl, [CARD_CLS])) cardCls++;
+        if (readAlignClass(n.nodeEl, [VCARD_CLS])) vCls++;
       });
     }
 
@@ -525,8 +745,11 @@ module.exports = class CanvasNodeAlign extends Plugin {
       '右键子菜单：' + (this.useSubmenu ? '支持' : '不支持，已回退平铺菜单'),
       '--cta-card 变量：' + (cssVar ? '"' + cssVar + '"（样式已生效）' : '（空，样式没生效）'),
       '当前白板文本卡：' + (cards < 0 ? '不在白板视图' : cards + ' 张'),
-      '其中已挂对齐类名：' + (cardCls < 0 ? '不在白板视图' : cardCls + ' 张'),
-      '各位置默认对齐：' + TARGETS.map(function (t) {
+      '其中已挂水平类名：' + (cardCls < 0 ? '不在白板视图' : cardCls + ' 张'),
+      '其中已挂垂直类名：' + (vCls < 0 ? '不在白板视图' : vCls + ' 张'),
+      '卡片默认垂直位置：' + (this.settings.cardV || DEFAULT_SETTINGS.cardV),
+      '两端对齐拉满末行：' + (this.settings.justifyLast ? '已开启' : '关闭'),
+      '各位置默认水平对齐：' + TARGETS.map(function (t) {
         return t.label + ' ' + (this.settings.defaults[t.key] || '-');
       }, this).join(' · '),
       '单独设置过的条目：' + this.countPerItem() + ' 个'
@@ -591,6 +814,7 @@ module.exports = class CanvasNodeAlign extends Plugin {
 
       // ① 持久层：把标记写进卡片文字。
       //    它是"数据"，换电脑、临时禁用插件、只用 CSS 片段时都靠它还原。
+      //    ★ withAlign 只动水平标记，垂直标记原样保留。
       const before = String(node.text == null ? '' : node.text);
       const after = withAlign(before, mode);
       if (after !== before) {
@@ -609,21 +833,63 @@ module.exports = class CanvasNodeAlign extends Plugin {
     if (!changed) return;                  // 没有实际改动就不发提示、不写撤销历史
 
     const name = mode ? (ALIGN_BY_KEY[mode] || {}).label || mode : '默认';
-    new Notice('已设置 ' + changed + ' 张卡片的文字对齐：' + name);
+    new Notice('已设置 ' + changed + ' 张卡片的水平对齐：' + name);
   }
 
-  // 把卡片元素上的对齐类名设成 align（传 null / undefined 表示摘掉）。
+  /* 垂直方向。和 applyToNodes 完全对称，只是换成垂直标记、垂直类名。 */
+  applyToNodesV(nodes, mode) {
+    let changed = 0;
+    let canvas = null;
+
+    for (const node of nodes) {
+      if (!isTextNode(node)) continue;
+      canvas = canvas || node.canvas;
+
+      const before = String(node.text == null ? '' : node.text);
+      const after = withVAlign(before, mode);
+      if (after !== before) {
+        writeText(node, after);
+        changed++;
+      }
+
+      // 清除时回落到设置里的默认位置，而不是摘掉类名 —— 摘掉后卡片会回到
+      // 「无类名」状态，而默认值不是 top 时就会显示错。统一由这里兜底。
+      this.applyCardVertical(node, mode || this.defaultVAlign());
+    }
+
+    if (changed && canvas) saveCanvas(canvas);
+    if (!changed) return;
+
+    const name = mode ? (VALIGN_BY_KEY[mode] || {}).label || mode
+                      : '默认（' + this.defaultVAlign() + '）';
+    new Notice('已设置 ' + changed + ' 张卡片的垂直位置：' + name);
+  }
+
+  defaultVAlign() {
+    return this.settings.cardV || DEFAULT_SETTINGS.cardV;
+  }
+
+  // 把卡片元素上的水平类名设成 align（传 null / undefined 表示摘掉）。
   // 类名挂在 node.nodeEl（即 .canvas-node）上，而不是 .canvas-node-content：
   // nodeEl 在节点构造时就存在，比"等内容元素渲染出来"可靠，且内容重渲染后不会丢。
   applyCardAlign(node, align) {
+    return this.applyNodeClass(node, CARD_CLS, align);
+  }
+
+  // 垂直方向同理，只是换一个前缀，两个方向各挂各的、互不覆盖。
+  applyCardVertical(node, valign) {
+    return this.applyNodeClass(node, VCARD_CLS, valign);
+  }
+
+  applyNodeClass(node, prefix, value) {
     const el = node && node.nodeEl;
     if (!el || !el.classList) return false;
 
-    const want = align || null;
-    if (readAlignClass(el, [CARD_CLS]) === want) return true;   // 已经一致，不动 DOM
+    const want = value || null;
+    if (readAlignClass(el, [prefix]) === want) return true;   // 已经一致，不动 DOM
 
-    clearAlignClasses(el, [CARD_CLS]);
-    if (want) el.classList.add(CARD_CLS + want);
+    clearAlignClasses(el, [prefix]);
+    if (want) el.classList.add(prefix + want);
     return true;
   }
 
@@ -632,7 +898,9 @@ module.exports = class CanvasNodeAlign extends Plugin {
     for (const node of nodes) {
       if (!isTextNode(node)) continue;
       const k = readAlign(node.text);
-      const label = k ? (ALIGN_BY_KEY[k] || {}).label : '未设置（跟随默认）';
+      const vk = readVAlign(node.text);
+      const label = (k ? (ALIGN_BY_KEY[k] || {}).label : '未设置') + ' × ' +
+                    (vk ? (VALIGN_BY_KEY[vk] || {}).label : '未设置');
       tally[label] = (tally[label] || 0) + 1;
     }
     const parts = Object.keys(tally).filter((k) => tally[k]).map((k) => k + ' × ' + tally[k]);
@@ -642,20 +910,25 @@ module.exports = class CanvasNodeAlign extends Plugin {
 
   /* ─────────────────────────────────────────────── 标签类（类名法） */
 
-  // kind: 'group' | 'path' | 'label'
+  // kind: 'group' | 'path' | 'label' | 'vcard'
+  //   vcard = 整张卡片的垂直位置（只用于写不了标记的卡片：嵌入笔记 / 网页）
   itemKey(kind, obj) {
     const id = (obj && obj.getData && obj.getData().id) || (obj && obj.id);
     if (!id) return null;
-    const tag = kind === 'path' ? 'e' : (kind === 'group' ? 'g' : 'n');
+    const tag = kind === 'path' ? 'e'
+              : kind === 'group' ? 'g'
+              : kind === 'vcard' ? 'v'
+              : 'n';
     return tag + ':' + id;
   }
 
-  // 从边里取到 .canvas-path-label 元素（边有 label 时才存在）
+  // 从对象里取到「要挂类名的那个元素」
   labelElOf(canvas, kind, obj) {
     if (kind === 'path') {
       const le = obj && obj.labelElement;
       return (le && le.textareaEl) || null;
     }
+    if (kind === 'vcard') return (obj && obj.nodeEl) || null;   // 整张卡片（.canvas-node）
     return (obj && obj.labelEl) || null;   // 分组 → .canvas-group-label；卡片 → .canvas-node-label
   }
 
@@ -672,9 +945,11 @@ module.exports = class CanvasNodeAlign extends Plugin {
 
     this.applyOne(canvas, kind, obj, align, prefix);
 
-    const name = align ? (ALIGN_BY_KEY[align] || {}).label || align : '默认';
+    const byKey = kind === 'vcard' ? VALIGN_BY_KEY : ALIGN_BY_KEY;
+    const name = align ? (byKey[align] || {}).label || align : '默认';
     new Notice(kind === 'group' ? '分组标签已设为：' + name
              : kind === 'path'  ? '连线标签已设为：' + name
+             : kind === 'vcard' ? '卡片垂直位置已设为：' + name
                                 : '文件名标签已设为：' + name);
   }
 
@@ -702,22 +977,38 @@ module.exports = class CanvasNodeAlign extends Plugin {
 
     Object.keys(bucket).forEach((key) => {
       const align = bucket[key];
-      const kind = key.charAt(0) === 'e' ? 'path' : (key.charAt(0) === 'g' ? 'group' : 'label');
+      const head = key.charAt(0);
+      const kind = head === 'e' ? 'path'
+                 : head === 'g' ? 'group'
+                 : head === 'v' ? 'vcard'
+                 : 'label';
       const id = key.slice(2);
       const obj = this.findObj(canvas, kind, id);
       if (!obj) return;
-      const prefix = kind === 'path' ? PATH_CLS : (kind === 'group' ? GROUP_CLS : NLABEL_CLS);
+      // 'v' 是整张卡片的垂直位置。文本卡的垂直由标记负责（上面 reapplyCards
+      // 已经处理过），这里只认非文本卡，免得两条路互相打架。
+      if (kind === 'vcard' && isTextNode(obj)) return;
+      const prefix = kind === 'path' ? PATH_CLS
+                   : kind === 'group' ? GROUP_CLS
+                   : kind === 'vcard' ? VCARD_CLS
+                   : NLABEL_CLS;
       this.applyOne(canvas, kind, obj, align, prefix);
     });
   }
 
-  // 逐张读卡片文字里的标记，把类名重新挂上。手抄标记的卡片也一并照顾到。
+  // 逐张读卡片文字里的标记，把两个方向的类名都重新挂上。
+  // 手抄标记的卡片也一并照顾到。
   reapplyCards(canvas) {
     if (!canvas || !canvas.nodes || typeof canvas.nodes.forEach !== 'function') return;
+    const defV = this.defaultVAlign();
     canvas.nodes.forEach((node) => {
       if (!isTextNode(node)) return;
       const data = (node.getData && node.getData()) || {};
       this.applyCardAlign(node, readAlign(data.text));
+      // 垂直：没写标记就用设置里的默认值。默认值顶层是 top（等于原生表现），
+      // 所以这一步对没动过垂直的卡片是无副作用的；但用户一旦把默认改成
+      // 「垂直居中」，所有没单独设置过的卡片都要跟着动，就得靠这里。
+      this.applyCardVertical(node, readVAlign(data.text) || defV);
     });
   }
 
@@ -842,6 +1133,18 @@ function isGroupNode(node) {
   }
 }
 
+// 「不是文本卡、也不是分组」的普通卡片（嵌入笔记 / 网页 / 图片…）。
+// 这类卡片的内容是别人的文件，不能往里写标记，所以垂直对齐改走运行时类名。
+function isAlignableCard(node) {
+  if (!node || typeof node.getData !== 'function') return false;
+  try {
+    const t = node.getData().type;
+    return t !== 'group' && t !== 'text';
+  } catch (e) {
+    return false;
+  }
+}
+
 // canvas 对应的文件路径，用作 perItem 的一级键
 function canvasPath(canvas) {
   if (!canvas) return null;
@@ -878,4 +1181,7 @@ function saveCanvas(canvas) {
 
 /* ══════════════════════════════════════════════════════════ 导出纯函数供单测
    （Obsidian 环境里 module.exports 是插件类，这里只在 Node 下补充挂载） */
-module.exports.__pure = { readAlign, stripMarks, withAlign, clearAlignClasses, toArray, mergeNoteClass };
+module.exports.__pure = {
+  readAlign, readVAlign, stripMarks, withAlign, withVAlign,
+  clearAlignClasses, readAlignClass, toArray, mergeNoteClass
+};

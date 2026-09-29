@@ -10,12 +10,17 @@
      会因「大范围选择器失效 → 性能问题」把 has 伪类 判为警告。挂类名是等价的
      O(1) 匹配，没有这个副作用。改动时请**不要**把 has 伪类 加回来。
    ----------------------------------------------------------------------------
-   本文件分 9 段：
-     ① 全局默认变量        ② 卡片正文（逐张，运行时类名）
-     ③ 隐藏标记本身        ④ 跟随 / 不跟随
-     ⑤ 卡片文件名标签      ⑥ 分组标签
-     ⑦ 卡片内嵌笔记正文     ⑧ 逐项覆盖（分组 / 连线 / 文件名的运行时类名）
-     ⑨ 笔记正文对齐
+   对齐有两个方向，互相独立，可任意组合（4 × 3 = 12 种）：
+     水平 text-align  →  left | center | right | justify
+     垂直 由弹性占位块  →  top  | middle | bottom
+   ----------------------------------------------------------------------------
+   本文件分 11 段：
+     ① 全局默认变量            ② 卡片正文水平（逐张，运行时类名）
+     ③ 卡片正文垂直（逐张）      ④ 隐藏标记本身
+     ⑤ 跟着 / 不跟随           ⑥ 编辑态（CM6）也跟随
+     ⑦ 卡片文件名标签          ⑧ 分组标签
+     ⑨ 卡片内嵌笔记正文        ⑩ 逐项覆盖（分组 / 连线 / 文件名 / 卡片垂直）
+     ⑪ 笔记正文对齐
    ============================================================================ */
 
 
@@ -24,17 +29,17 @@
 /* 插件设置面板会把这些变量写到 <body> 上（body 比 :root 更靠下，
    所以面板里的值会覆盖这里的默认值）。直接改这里的值也行。 */
 :root {
-  --cta-card:  left;      /* 白板卡片正文：left | center | right | justify */
-  --cta-note:  inherit;   /* 卡片内嵌笔记的正文：inherit = 跟随所在卡片，★别改成 left */
+  --cta-card:  left;      /* 白板卡片正文水平：left | center | right | justify */
+  --cta-note:  inherit;   /* 卡片内嵌笔记的正文水平：inherit = 跟随所在卡片，★别改成 left */
   --cta-label: left;      /* 卡片文件名标签 */
   --cta-group: center;    /* 分组标签 */
   --cta-path:  center;    /* 连线标签（原生本来就是居中） */
 }
 
 
-/* ═══════════════════════════════════════════ ② 卡片正文：逐张选择（运行时类名） ═════════ */
+/* ═══════════════════════════════════════════ ② 卡片正文：水平（运行时类名） ═════════ */
 
-/* 这是主角。插件应用对齐时做两件事：
+/* 这是主角。插件应用水平对齐时做两件事：
 
      ① 把 <span class="cta-x"></span> 标记写进卡片文字 —— 这是**数据**。
         换电脑、临时禁用插件、只用 CSS 片段时，都靠它把对齐还原回来。
@@ -51,7 +56,7 @@
    分组里只要有一张卡写了标记，整组卡片都会被带着变。写死就没有这个传导问题。
 
    权重：下面四条是 (0,3,0)，稳压上面 (0,2,0) 的全局默认；
-   第 ⑦ 段那条 (0,4,0) 用的是 inherit，所以不会把它们压掉。改动时务必留意。 */
+   第 ⑨ 段那条 (0,4,0) 用的是 inherit，所以不会把它们压掉。改动时务必留意。 */
 
 .canvas-node-content { text-align: var(--cta-card); }
 
@@ -61,11 +66,82 @@
 .canvas-node.cta-card-justify .canvas-node-content { text-align: justify; }
 
 
-/* ═══════════════════════════════════════════ ③ 让标记本身不显示 ═════════ */
+/* ═══════════════════════════════════════════ ③ 卡片正文：垂直（运行时类名） ═════════ */
+
+/* 垂直方向**不是**靠 text-align，而是靠 Obsidian 自己搭的一套弹性布局。
+   这一段是整个文件最需要理解的地方，改之前务必看完。
+
+   ── Obsidian 原生的结构（逐字摘自 obsidian.asar） ──────────────────────────
+
+     .canvas-node-content.markdown-embed          宽度高度都是 100%
+       └ .markdown-embed-content                   height: 100%
+          └ .markdown-preview-view                 display: flex; flex-direction: column;
+             │                                     ★ 它自己就是个纵向 flex 容器
+             ├ ::before    ← 弹性占位块：flex: 1 1 0; max-height: 16px; min-height: 卡片高×10%
+             ├ .markdown-preview-sizer  ← 正文，flex: 1 0 0
+             └ ::after     ← 弹性占位块：同上
+
+   ⇒ 正文之所以永远贴在顶部，是因为两个占位块都被 max-height: 16px 卡死了：
+     多出来的高度全被 sizer（flex-grow: 1）吃掉，正文自然顶在最上面。
+
+   ── 所以垂直对齐只需要动这两个占位块 ────────────────────────────────────
+
+     顶端      上方占位块不许长（flex-grow: 0）→ 正文顶在最上方
+     垂直居中  两个占位块都解除 16px 上限，且正文块不再抢高度（flex-grow: 0）
+               → 剩余高度被上下均分，正文落在正中
+     底部      上方占位块解除上限并吃满剩余高度，下方占位块钉住 → 正文沉到底部
+
+   ★ 为什么不用 justify-content: center？
+     内容比卡片高时，justify-content: center 会把上半截挤出可视区且**滚不到**
+     （经典缺陷）。这里只动 flex-grow，溢出时依然是「从顶端开始 + 底部滚动」，
+     一个字都不会丢。sizer 的 flex-shrink 保持 0，正文也永远不会被压扁。
+
+   权重：下面每条都是 6 个类 (0,6,0) + 伪元素 (0,6,1)，
+   郑重压过 Obsidian 原生那几条 (0,4,0) / (0,4,1)。改动时务必留意。
+
+   适用范围：只命中阅读视图（.markdown-preview-view）。编辑态走 ⑥ 段，
+   故意不做垂直居中的活 —— 光标在卡片里跳动时贴顶更自然。 */
+
+/* ── 顶端：Obsidian 原生就是这个位置，这里只是把它钉死，让三种状态完全确定 ── */
+.canvas-node.cta-v-top .canvas-node-content.markdown-embed
+  > .markdown-embed-content > .markdown-preview-view::before {
+  flex-grow: 0;
+}
+
+/* ── 垂直居中 ── */
+.canvas-node.cta-v-middle .canvas-node-content.markdown-embed
+  > .markdown-embed-content > .markdown-preview-view::before,
+.canvas-node.cta-v-middle .canvas-node-content.markdown-embed
+  > .markdown-embed-content > .markdown-preview-view::after {
+  max-height: none;
+}
+.canvas-node.cta-v-middle .canvas-node-content.markdown-embed
+  > .markdown-embed-content > .markdown-preview-view > .markdown-preview-sizer {
+  flex-grow: 0;
+}
+
+/* ── 底部 ── */
+.canvas-node.cta-v-bottom .canvas-node-content.markdown-embed
+  > .markdown-embed-content > .markdown-preview-view::before {
+  max-height: none;
+}
+.canvas-node.cta-v-bottom .canvas-node-content.markdown-embed
+  > .markdown-embed-content > .markdown-preview-view::after {
+  flex-grow: 0;
+}
+.canvas-node.cta-v-bottom .canvas-node-content.markdown-embed
+  > .markdown-embed-content > .markdown-preview-view > .markdown-preview-sizer {
+  flex-grow: 0;
+}
+
+
+/* ═══════════════════════════════════════════ ④ 让标记本身不显示 ═════════ */
 
 /* <span> 是空元素本来就看不见，这条是双保险；
-   顺便把「标签写法」的小胶囊也藏掉，让两种写法观感一致。 */
-.canvas-node-content :is(.cta-l, .cta-c, .cta-r, .cta-j) {
+   顺便把「标签写法」的小胶囊也藏掉，让两种写法观感一致。
+   垂直标记（cta-vt / vm / vb）同理。 */
+.canvas-node-content :is(.cta-l, .cta-c, .cta-r, .cta-j,
+                         .cta-vt, .cta-vm, .cta-vb) {
   display: none;
 }
 
@@ -77,7 +153,7 @@
    因为它不在插件仓库内、不参与审核），或者把标记写在某行文字末尾。 */
 
 
-/* ═══════════════════════════════════════════ ④ 跟着走 / 不跟着走 ═════════ */
+/* ═══════════════════════════════════════════ ⑤ 跟着走 / 不跟着走 ═════════ */
 
 /* 标题、列表项：有些主题会单独给它们设 text-align，用 inherit 拉回父级设定 */
 .canvas-node-content :is(h1, h2, h3, h4, h5, h6, li) {
@@ -97,7 +173,38 @@
 }
 
 
-/* ═══════════════════════════════════════════ ⑤ 卡片文件名标签 ═════════ */
+/* ═══════════════════════════════════════════ ⑥ 编辑态（CM6）也跟随 ═════════ */
+
+/* 白板卡片默认显示阅读视图，双击/开始输入会换成 CodeMirror 6 编辑器，
+   此时正文在 .markdown-source-view.mod-cm6 里，跟 ② 段命中的不是同一层。
+   这里补上四条，让「边打字边看」时的对齐跟阅读态一致。
+   （只补水平；垂直按 ③ 段的说明，编辑态故意不居中。） */
+
+.canvas-node.cta-card-left    .canvas-node-content .markdown-source-view.mod-cm6
+  :is(.cm-content, .cm-line) { text-align: left; }
+.canvas-node.cta-card-center  .canvas-node-content .markdown-source-view.mod-cm6
+  :is(.cm-content, .cm-line) { text-align: center; }
+.canvas-node.cta-card-right   .canvas-node-content .markdown-source-view.mod-cm6
+  :is(.cm-content, .cm-line) { text-align: right; }
+.canvas-node.cta-card-justify .canvas-node-content .markdown-source-view.mod-cm6
+  :is(.cm-content, .cm-line) { text-align: justify; }
+
+/* ── 两端对齐的补充说明（设置里有开关） ──────────────────────────────
+   按排版规范，两端对齐**不拉伸最后一行**。中文短句常常只有一行，
+   于是看起来和左对齐一模一样 —— 不是没生效，是没有可拉伸的行。
+   想让短句也拉满，在设置里打开「两端对齐时最后一行也拉满」，
+   插件会给 <body> 挂上 cta-justify-last 类名，下面这条就生效。 */
+body.cta-justify-last .canvas-node.cta-card-justify .canvas-node-content :is(p, li),
+body.cta-justify-last .canvas-node.cta-card-justify .canvas-node-content
+  .markdown-source-view.mod-cm6 .cm-line {
+  text-align-last: justify;
+}
+body.cta-justify-last .cta-note-justify .markdown-preview-view.markdown-rendered :is(p, li) {
+  text-align-last: justify;
+}
+
+
+/* ═══════════════════════════════════════════ ⑦ 卡片文件名标签 ═════════ */
 
 /* 原生贴在卡片左上角外侧。改成水平居中要动三处，
    其中 transform-origin 必须改成 center，否则白板缩放时标签会横向漂移。
@@ -115,7 +222,7 @@
 }
 
 
-/* ═══════════════════════════════════════════ ⑥ 分组标签 ═════════ */
+/* ═══════════════════════════════════════════ ⑧ 分组标签 ═════════ */
 
 /* 原生贴在分组框左上角外侧，这里改成「贴顶边、水平居中」。
    scale(var(--zoom-multiplier)) 负责让标签跟随白板缩放，**不能删**，
@@ -130,7 +237,7 @@
 }
 
 
-/* ═══════════════════════════════════════════ ⑦ 卡片内嵌入的笔记正文 ═════════ */
+/* ═══════════════════════════════════════════ ⑨ 卡片内嵌入的笔记正文 ═════════ */
 
 /* ⚠️ 全文件最容易踩的坑，改之前务必看完：
 
@@ -141,18 +248,23 @@
 
    ⇒ 默认值必须是 inherit：让它跟随所在卡片的 text-align。
       · 文本卡：父级被 .cta-card-center 设成 center → 这里继承到 center ✔
-      · 嵌入整篇笔记的卡：父级是 --cta-card → 继承到卡片正文的默认值 ✔ */
+      · 嵌入整篇笔记的卡：父级是 --cta-card → 继承到卡片正文的默认值 ✔
+   ★ 注意只写 text-align，**不要**在这里加 ③ 段那套 flex 属性 ——
+     会跟垂直对齐的选择器抢权重。垂直对齐只走 ③ 段。 */
 .canvas-node-content.markdown-embed > .markdown-embed-content > .markdown-preview-view,
 .canvas-node-content.markdown-embed .markdown-embed-content {
   text-align: var(--cta-note);
 }
 
 
-/* ═══════════════════════════════════════════ ⑧ 逐项覆盖（插件运行时挂的类名） ═════════ */
+/* ═══════════════════════════════════════════ ⑩ 逐项覆盖（插件运行时挂的类名） ═════════ */
 
 /* 分组标签 / 连线标签 / 文件名标签没法在内容里写标记（Obsidian 用
    setText / textContent 渲染它们，塞 HTML 会原样显示）。所以这三处改用
    「右键 → 挂类名」，状态记在插件的数据文件里。
+
+   同理，「嵌入笔记 / 网页 / 图片的卡片」也不能往内容里写标记（那是别人的文件），
+   它们的垂直对齐也走这条路。
 
    权重刻意写到 (0,3,0)，稳压上面 (0,2,0) 的全局默认。 */
 
@@ -171,8 +283,10 @@
 .canvas-wrapper .canvas-node-label.cta-nlabel-right   { text-align: right; }
 .canvas-wrapper .canvas-node-label.cta-nlabel-justify { text-align: justify; }
 
+/* 卡片垂直对齐只用到 cta-v-* 类名，规则全在 ③ 段，这里不需要重复。 */
 
-/* ═══════════════════════════════════════════ ⑨ 笔记正文对齐 ═════════ */
+
+/* ═══════════════════════════════════════════ ⑪ 笔记正文对齐 ═════════ */
 
 /* 由插件的「笔记正文：左/中/右/两端对齐」命令写入笔记的 frontmatter：
        cssclasses: [cta-note-center]

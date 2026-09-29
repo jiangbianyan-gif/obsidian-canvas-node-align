@@ -24,10 +24,12 @@ function slice(startMark, endMark) {
   return src.slice(i, j);
 }
 
-const consts = slice('// 四种对齐方式。letter', 'class CanvasNodeAlignSettingTab');
+const consts = slice('const ALIGNS = [', 'class CanvasNodeAlignSettingTab');
 const code =
   consts +
-  '\nreturn {readAlign, stripMarks, withAlign, clearAlignClasses, readAlignClass, toArray, mergeNoteClass, ALIGN_BY_KEY, CARD_CLS, GROUP_CLS, PATH_CLS, NLABEL_CLS};';
+  '\nreturn {readAlign, readVAlign, stripMarks, withAlign, withVAlign, clearAlignClasses, ' +
+  'readAlignClass, toArray, mergeNoteClass, ALIGN_BY_KEY, VALIGN_BY_KEY, ' +
+  'CARD_CLS, VCARD_CLS, GROUP_CLS, PATH_CLS, NLABEL_CLS, JUSTIFY_LAST_CLS};';
 const A = new Function(code)();
 
 let pass = 0;
@@ -163,6 +165,75 @@ el.classList.add(A.CARD_CLS + 'right');
 eq(el.classes, ['canvas-node', 'cta-card-right', 'my-own'], 'clear-then-set keeps unrelated classes');
 eq(A.readAlignClass(el, [A.CARD_CLS]), 'right', 'reads back the new value');
 
+/* ---------- readVAlign / withVAlign / 两个方向互不干扰（2.2.0 新增） ---------- */
+
+const CV = '<span class="cta-c"></span>';   // 水平：居中
+const VM = '<span class="cta-vm"></span>';  // 垂直：居中
+
+// 读
+eq(A.readVAlign('文字' + VM), 'middle', 'read the vertical span marker');
+eq(A.readVAlign('文字<span class="cta-vt"></span>'), 'top', 'reads top');
+eq(A.readVAlign('文字<span class="cta-vb"></span>'), 'bottom', 'reads bottom');
+eq(A.readVAlign('#cta-vm 文字'), 'middle', 'read the vertical tag marker');
+eq(A.readVAlign('文字 #cta-vt'), 'top', 'read the vertical tag marker mid-line');
+eq(A.readVAlign('plain text'), null, 'no vertical marker -> null');
+eq(A.readVAlign(''), null, 'empty string -> null');
+eq(A.readVAlign(null), null, 'null -> null');
+eq(A.readVAlign('#cta-vmm'), null, 'does not match the lookalike #cta-vmm');
+eq(A.readVAlign('#cta-v'), null, 'does not match a truncated vertical tag');
+
+// ★ 两个方向的标记必须互不认识，否则会互相误读
+eq(A.readVAlign('文字' + CV), null, 'a horizontal marker is not read as vertical');
+eq(A.readAlign('文字' + VM), null, 'a vertical marker is not read as horizontal');
+eq(A.readAlign('文字' + CV + VM), 'center', 'both markers present: horizontal still readable');
+eq(A.readVAlign('文字' + CV + VM), 'middle', 'both markers present: vertical still readable');
+
+// 写
+eq(A.withVAlign('文字', 'middle'), '文字' + VM, 'single line, middle');
+eq(A.withVAlign('A\nB', 'bottom'), 'A<span class="cta-vb"></span>\nB', 'marker goes at the end of the FIRST line');
+eq(A.withVAlign('A\r\nB', 'top'), 'A<span class="cta-vt"></span>\r\nB', 'CRLF: marker lands before \\r, not between \\r and \\n');
+eq(A.withVAlign('- 项目\n- 项目2', 'middle'), '- 项目' + VM + '\n- 项目2', 'does not break list syntax');
+eq(A.withVAlign('已有<span class="cta-vt"></span>', 'middle'), '已有' + VM, 'replaces the old vertical marker instead of stacking');
+eq(A.withVAlign('已有 #cta-vt', 'middle'), '已有' + VM, 'replaces the vertical tag spelling too');
+eq(A.withVAlign(A.withVAlign('A', 'bottom'), 'bottom'), A.withVAlign('A', 'bottom'), 'idempotent: twice equals once');
+eq(A.withVAlign('A', null), 'A', 'null clears the vertical marker');
+eq(A.withVAlign(VM + 'A', null), 'A', 'clearing restores the original text');
+
+// ★★ 最关键的一条：设水平不能把垂直标记抹掉，反之亦然
+eq(A.withAlign('A' + VM, 'right'), 'A' + VM + '<span class="cta-r"></span>',
+   'setting horizontal KEEPS an existing vertical marker');
+eq(A.withVAlign('A' + CV, 'bottom'), 'A' + CV + '<span class="cta-vb"></span>',
+   'setting vertical KEEPS an existing horizontal marker');
+eq(A.withAlign(A.withVAlign('A', 'bottom'), 'center'), 'A<span class="cta-vb"></span>' + CV,
+   'vertical then horizontal: both survive');
+eq(A.readVAlign(A.withAlign(A.withVAlign('A', 'bottom'), 'center')), 'bottom',
+   'vertical survives a horizontal change (read back)');
+eq(A.withAlign('A' + CV + VM, null), 'A' + VM,
+   'clearing horizontal leaves the vertical marker behind');
+eq(A.withVAlign('A' + CV + VM, null), 'A' + CV,
+   'clearing vertical leaves the horizontal marker behind');
+
+// 全清
+eq(A.stripMarks('A' + CV), 'A', 'stripMarks removes the horizontal marker');
+eq(A.stripMarks('A' + VM), 'A', 'stripMarks removes the vertical marker');
+eq(A.stripMarks('A' + CV + VM), 'A', 'stripMarks removes both at once');
+eq(A.stripMarks('A #cta-c B #cta-vm'), 'A B', 'stripMarks removes both tag spellings');
+eq(A.stripMarks('A<span class="cta-vmm"></span>'), 'A<span class="cta-vmm"></span>', 'stripMarks leaves a lookalike alone');
+
+// 类名：两个前缀不能互相误伤
+eq(A.readAlignClass(mockEl(['cta-v-middle']), [A.VCARD_CLS]), 'middle', 'reads the card vertical class');
+eq(A.readAlignClass(mockEl(['cta-card-center', 'cta-v-middle']), [A.CARD_CLS]), 'center',
+   'the horizontal prefix ignores a vertical class sitting next to it');
+eq(A.readAlignClass(mockEl(['cta-card-center', 'cta-v-middle']), [A.VCARD_CLS]), 'middle',
+   'the vertical prefix ignores a horizontal class sitting next to it');
+eq(A.readAlignClass(mockEl(['cta-v-']), [A.VCARD_CLS]), null, 'a bare vertical prefix counts as unset');
+
+el = mockEl(['canvas-node', 'cta-card-center', 'cta-v-middle']);
+A.clearAlignClasses(el, [A.CARD_CLS]);
+eq(el.classes, ['canvas-node', 'cta-v-middle'], 'clearing the horizontal class leaves the vertical one');
+A.clearAlignClasses(el, [A.VCARD_CLS]);
+eq(el.classes, ['canvas-node'], 'clearing the vertical class leaves the node class');
+
 /* ---------- stylesheet guard ----------
  * The community directory runs a CSS linter that flags `:has(` as a performance
  * warning ("broad selector invalidation"). Card alignment is done with runtime
@@ -175,6 +246,46 @@ eq(/\.canvas-node\.cta-card-left\s+\.canvas-node-content/.test(cssNoComment), tr
 eq(/\.canvas-node\.cta-card-center\s+\.canvas-node-content/.test(cssNoComment), true, 'has the cta-card-center rule');
 eq(/\.canvas-node\.cta-card-right\s+\.canvas-node-content/.test(cssNoComment), true, 'has the cta-card-right rule');
 eq(/\.canvas-node\.cta-card-justify\s+\.canvas-node-content/.test(cssNoComment), true, 'has the cta-card-justify rule');
+
+/* ---------- 垂直对齐的样式守卫（2.2.0 新增） ----------
+ * 垂直对齐靠覆盖 Obsidian 自带的 flex 占位块实现。Obsidian 那几条选择器是
+ * 4 个类（权重 0,4,0 / 0,4,1），所以我们的每条垂直选择器都写了 6 个类。
+ * 这里既检查规则在不在，也检查权重够不够 —— 万一有人"顺手简化"选择器，
+ * 样式会静默失效（这正是 2.0 那次踩的坑），必须让测试挡下来。 */
+const flat = cssNoComment.replace(/\s+/g, ' ').trim();
+const PV = '.canvas-node-content.markdown-embed > .markdown-embed-content > .markdown-preview-view';
+
+eq(flat.indexOf('.canvas-node.cta-v-top ' + PV + '::before { flex-grow: 0; }') >= 0, true,
+   'v-top pins the top spacer (flex-grow: 0)');
+eq(flat.indexOf('.canvas-node.cta-v-middle ' + PV + '::before, ' +
+                '.canvas-node.cta-v-middle ' + PV + '::after { max-height: none; }') >= 0, true,
+   'v-middle releases the 16px cap on both spacers');
+eq(flat.indexOf('.canvas-node.cta-v-middle ' + PV +
+                ' > .markdown-preview-sizer { flex-grow: 0; }') >= 0, true,
+   'v-middle stops the sizer from eating the free space');
+eq(flat.indexOf('.canvas-node.cta-v-bottom ' + PV + '::before { max-height: none; }') >= 0, true,
+   'v-bottom lets the top spacer absorb the free space');
+eq(flat.indexOf('.canvas-node.cta-v-bottom ' + PV + '::after { flex-grow: 0; }') >= 0, true,
+   'v-bottom pins the bottom spacer');
+eq(flat.indexOf('.canvas-node.cta-v-bottom ' + PV +
+                ' > .markdown-preview-sizer { flex-grow: 0; }') >= 0, true,
+   'v-bottom stops the sizer from eating the free space');
+
+const vRules = flat.match(/[^;{}]*\.canvas-node\.cta-v-[^{}]*\{[^{}]*\}/g) || [];
+eq(vRules.length, 6, 'has all six vertical rules');
+let minCls = 99;
+vRules.forEach(function (rule) {
+  rule.slice(0, rule.indexOf('{')).split(',').forEach(function (sel) {
+    const n = (sel.match(/\.[A-Za-z_][\w-]*/g) || []).length;
+    if (n < minCls) minCls = n;
+  });
+});
+eq(minCls, 6, 'every vertical selector carries 6 classes, beating Obsidian\'s 4');
+
+eq(flat.indexOf('body.cta-justify-last') >= 0, true, 'has the justify-last opt-in rule');
+eq(A.JUSTIFY_LAST_CLS, 'cta-justify-last', 'the class name matches the stylesheet');
+eq(flat.indexOf('.canvas-node.cta-card-justify .canvas-node-content .markdown-source-view.mod-cm6') >= 0, true,
+   'edit mode (CM6) also follows the horizontal alignment');
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

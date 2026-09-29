@@ -1,9 +1,9 @@
 {
   "id": "canvas-node-align",
   "name": "Canvas Node Align",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "minAppVersion": "1.5.0",
-  "description": "Align text inside Canvas cards, group labels, edge labels and card labels, plus Markdown note bodies. Each item keeps its own alignment, stored as plain text so .canvas files stay standard JSON Canvas.",
+  "description": "Align text inside Canvas cards, group labels, edge labels and card labels, plus Markdown note bodies. Horizontal alignment (left, center, right, justify) and vertical position (top, middle, bottom) combine freely; every item keeps its own setting.",
   "author": "jiangbianyan-gif",
   "authorUrl": "https://github.com/jiangbianyan-gif",
   "isDesktopOnly": false

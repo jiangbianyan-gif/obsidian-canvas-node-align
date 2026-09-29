@@ -11,20 +11,33 @@ Canvas has no text-alignment setting of its own. Right-click menus offer *align*
    right-click → align → center
 ```
 
+Alignment works on **two independent axes**, so they combine freely:
+
+| Axis | Values | What it controls |
+|---|---|---|
+| **Horizontal** | left / center / right / justify | where each line starts and ends |
+| **Vertical** | top / middle / bottom | which height the whole block of text sits at |
+
+That is 4 × 3 = **12 positions**. Stock Canvas gives you one (left + top).
+
 ## Features
 
-| # | Where the text lives | How it is set | Stored in |
-|---|---|---|---|
-| 1 | Card body (text cards) | right-click a card, **per card** | the card's own text |
-| 2 | Note body embedded in a card | Settings tab (global) | plugin settings |
-| 3 | Card label (file name) | right-click a card, **per card** | plugin data |
-| 4 | Group label | right-click a group, **per group** | plugin data |
-| 5 | Edge label | right-click an edge, **per edge** | plugin data |
-| 6 | callouts / headings / code blocks inside a card | follows #1 | — |
+| # | Where the text lives | Axis | How it is set | Stored in |
+|---|---|---|---|---|
+| 1 | Card body (text cards) | horizontal + vertical | right-click a card, **per card** | the card's own text |
+| 2 | Note body embedded in a card | horizontal | Settings tab (global) | plugin settings |
+| 3 | Card label (file name) | horizontal | right-click a card, **per card** | plugin data |
+| 4 | Group label | horizontal | right-click a group, **per group** | plugin data |
+| 5 | Edge label | horizontal | right-click an edge, **per edge** | plugin data |
+| 6 | callouts / headings / code blocks inside a card | horizontal | follows #1 | — |
+| 7 | Body of a card that embeds a note or a web page | vertical | right-click a card, **per card** | plugin data |
 
 Plus **Markdown note bodies** (`left` / `center` / `right` / `justify`), which stock Obsidian cannot do either. That is written to the note's `cssclasses` frontmatter, so it is fully reversible.
 
-Also included: a command to align **every card on the current canvas** at once.
+Also included: commands to set **every card on the current canvas** to the same position at once, for both axes.
+
+> The label rows are horizontal-only: a label is a single line whose box hugs its
+> text, so there is no vertical room to move it around in.
 
 ## Installation
 
@@ -52,25 +65,35 @@ Obsidian **1.5.0** or newer. Developed and tested on **1.13.7**.
 ## Usage
 
 ### Card text, per card
-Right-click a card → **卡片文字对齐** (*Card text alignment*) → pick one of
-**左对齐** / **居中** / **右对齐** / **两端对齐** / **清除** (*left / center / right / justify / clear*).
+Right-click a card →
+- **卡片文字对齐 · 水平** (*Card text alignment · horizontal*) → **左对齐** / **居中** / **右对齐** / **两端对齐** / **清除** (*left / center / right / justify / clear*)
+- **卡片文字对齐 · 垂直** (*Card text alignment · vertical*) → **顶部** / **垂直居中** / **底部** / **清除** (*top / middle / bottom / clear*)
 
-Under the hood this inserts a small plain-text marker at the end of the card's first line:
+The two menus are independent, and setting one never disturbs the other: pick
+*vertical center*, then change the horizontal alignment, and the card stays
+vertically centred.
+
+Under the hood this inserts small plain-text markers at the end of the card's first line:
 
 ```
-模型变换<span class="cta-c"></span>
+模型变换<span class="cta-c"></span><span class="cta-vm"></span>
 ```
 
-Supported markers (all four alignments, two spellings each):
+Supported markers — one set per axis, two spellings each:
 
-| Marker | Tag spelling | Result |
-|---|---|---|
-| `<span class="cta-l"></span>` | `#cta-l` | left |
-| `<span class="cta-c"></span>` | `#cta-c` | center |
-| `<span class="cta-r"></span>` | `#cta-r` | right |
-| `<span class="cta-j"></span>` | `#cta-j` | justify |
+| Axis | Marker | Tag spelling | Result |
+|---|---|---|---|
+| horizontal | `<span class="cta-l"></span>` | `#cta-l` | left |
+| horizontal | `<span class="cta-c"></span>` | `#cta-c` | center |
+| horizontal | `<span class="cta-r"></span>` | `#cta-r` | right |
+| horizontal | `<span class="cta-j"></span>` | `#cta-j` | justify |
+| vertical | `<span class="cta-vt"></span>` | `#cta-vt` | top |
+| vertical | `<span class="cta-vm"></span>` | `#cta-vm` | middle |
+| vertical | `<span class="cta-vb"></span>` | `#cta-vb` | bottom |
 
-You can also type these by hand — the plugin is only a convenient way to write them.
+You can also type these by hand — the plugin is only a convenient way to write
+them. Writing just the horizontal marker is fine; the vertical axis then follows
+the default from the settings tab.
 
 The marker goes at the **end of the first line**, never at the start: a leading marker would break block syntax such as `- item` or `# heading`.
 
@@ -79,10 +102,29 @@ The marker goes at the **end of the first line**, never at the start: a leading 
 | Layer | What it does | Why it exists |
 |---|---|---|
 | **Data** | writes the marker into the card's text | so the alignment survives a new machine, a temporarily disabled plugin, or a plain CSS snippet. Apart from that piece of text, nothing non-standard is ever written to the `.canvas` file |
-| **Render** | adds a `cta-card-<alignment>` class to the card element at runtime | so the stylesheet can act on it. Deliberately **not** done with CSS `:has()` — the community directory's CSS linter flags that as a performance warning, and a class match is the cheaper equivalent |
+| **Render** | adds a `cta-card-<alignment>` / `cta-v-<position>` class to the card element at runtime | so the stylesheet can act on it. Deliberately **not** done with CSS `:has()` — the community directory's CSS linter flags that as a performance warning, and a class match is the cheaper equivalent |
 
 Hand-written markers work the same way: the plugin reads every card's text whenever
 a canvas is opened, and adds the class for any marker it finds.
+
+### How vertical alignment works
+Obsidian's card body is already a vertical flex layout: `.markdown-preview-view`
+is `flex-direction: column`, with one flexible spacer pseudo-element (`::before`)
+above the text and another (`::after`) below it. Both spacers are capped at
+`max-height: 16px`, so the text block absorbs all the leftover height — which is
+why text is **always pinned to the top**.
+
+This plugin simply adjusts how those two spacers flex: *top* stops the upper
+spacer from growing; *middle* lifts the 16px cap on both and stops the text block
+from claiming the free space, so the remainder splits evenly above and below;
+*bottom* lets the upper spacer absorb everything. All of it is CSS — the plugin
+only adds the class name.
+
+> When the text is taller than the card, all three positions fall back to the
+> same top-anchored, scrollable layout, and **nothing is clipped or lost**. That
+> is exactly why this uses `flex-grow` on the spacers instead of
+> `justify-content: center` — the latter makes the top half unreachable when the
+> content overflows.
 
 ### Group / edge / card labels, per item
 Right-click the group (or edge, or a file card) → **…标签对齐** (*… label alignment*) → pick an alignment.
@@ -91,8 +133,15 @@ These three cannot use text markers. Obsidian renders them with `setText()` / `t
 
 **Trade-off:** because the choice lives in the plugin's data file and not in the `.canvas` file, these three stop being aligned if you disable the plugin. Card text (#1) does not have this limitation.
 
+### Cards that embed a note, a web page or media (vertical, per card)
+Right-click such a card → **卡片文字对齐 · 垂直** (*Card text alignment · vertical*).
+
+These cannot use a text marker either: the card is displaying **someone else's file**, and inserting a marker would edit that file. So their vertical position is recorded in the plugin's data file, same as the labels.
+
 ### Whole canvas at once
-Command palette → **整块白板：所有卡片居中** (and the other three), or **整块白板：所有卡片清除对齐**.
+Command palette →
+- **整块白板：所有卡片水平居中** (plus left / right / justify), **整块白板：所有卡片清除水平对齐**
+- **整块白板：所有卡片垂直居中** (plus top / bottom), **整块白板：所有卡片清除垂直对齐**
 
 ### Note bodies
 Command palette → **笔记正文：居中** / 右对齐 / 两端对齐 / 清除对齐.
@@ -100,7 +149,12 @@ Command palette → **笔记正文：居中** / 右对齐 / 两端对齐 / 清�
 This writes `cssclasses: [cta-note-center]` into the note's frontmatter. Existing `cssclasses` entries are preserved. Delete the class (or run 清除对齐) to revert. Live Preview works but the syntax marks move along with the text — Reading view looks cleaner.
 
 ### Settings
-Settings → Canvas Node Align. Five dropdowns set the defaults for each location; anything you have not set individually follows its default column. There is also a button to clear all per-item settings.
+Settings → Canvas Node Align:
+
+- **Five dropdowns** set the default **horizontal** alignment for each location; anything you have not set individually follows its default column.
+- **Default vertical position for card bodies** — where cards you have never touched vertically put their text.
+- **Stretch the last line when justifying** — see the note under *Known limitations*.
+- A button to clear all per-item settings.
 
 ## Why the file format stays clean
 
@@ -140,10 +194,12 @@ Every call is feature-detected or wrapped in a fallback, so a rename in a future
 
 ## Known limitations
 
-- Group, edge and card-label alignment is lost when the plugin is disabled (see the trade-off note above).
+- Group, edge and card-label alignment — and the vertical position of cards that embed another file — is lost when the plugin is disabled (see the trade-off note above).
 - Card-label text alignment only becomes visible once the label is wider than its text, which is why `styles.css` gives `.canvas-node-label` `width: 100%`. As a side effect, very long file names are ellipsised instead of overflowing.
 - Note-body alignment in Live Preview moves the syntax marks along with the text; Reading view is cleaner.
-- Alignment applies in the rendered (preview) state of a card. While you are editing a card, its content is CodeMirror source and the marker has not been rendered yet, so that card falls back to the default. Click an empty area of the canvas to leave edit mode and see the result.
+- Horizontal alignment applies in the rendered (preview) state of a card. While you are editing a card, its content is CodeMirror source and the marker has not been rendered yet, so that card falls back to the default. Click an empty area of the canvas to leave edit mode and see the result. Vertical alignment is **only** applied in the rendered state — deliberately, because a caret that jumps around the card while you type is unpleasant.
+- **`justify` only stretches the lines that are *not* the last one**, as per typographic convention. A short single-line card therefore looks identical under `justify` and `left` — the alignment did apply, there was simply nothing to stretch. Turn on *stretch the last line when justifying* in the settings tab if you want short text to stretch too.
+- Vertical middle/bottom are only visible when the card is **taller than its text**. Card height hugs its content by default, so drag the card a bit taller first.
 
 ## Development
 
@@ -167,7 +223,7 @@ npm run verify                  # node --check main.js && node test/align.test.j
 tools/install.sh "/path/to/vault"
 ```
 
-The tests slice the pure functions out of `main.js` and run them through `new Function`, so what is tested is exactly what ships. 48 assertions cover writing, idempotent replacement, clearing, list/heading safety, Windows line endings, class-name cleanup and frontmatter merging.
+The tests slice the pure functions out of `main.js` and run them through `new Function`, so what is tested is exactly what ships. 116 assertions cover both axes' markers, idempotent replacement, clearing, **"setting one axis never wipes the other"**, list/heading safety, Windows line endings, class-name cleanup (including that the two class prefixes never mistake each other), frontmatter merging, and a set of CSS guards that fail the build if a vertical selector loses the specificity it needs to beat Obsidian's own stylesheet.
 
 Source comments are written in Chinese.
 

@@ -31,6 +31,23 @@ independent, so they combine freely: 4 horizontal × 3 vertical = 12 positions.
   axis never wipes the other axis's marker, and CSS guards that fail the build
   if a vertical selector loses the specificity needed to beat Obsidian's own
   stylesheet.
+- `npm run build` (`tools/build.mjs`). The community directory runs the first
+  script it finds in the order `build` / `build:plugin` / `compile` and compares
+  the result against the committed source; the 2.1.0 review reported
+  *build verification could not run* because none of those existed. The plugin
+  has no bundler, so the command verifies the release payload instead of
+  generating it — it parses `main.js` in-process, validates the metadata, checks
+  that the three downloaded files are present and BOM-free, and prints their
+  sizes and sha256 hashes. It never rewrites a tracked file, so running it twice
+  leaves the hashes identical, which is the property being verified.
+  `npm run build -- --zip` additionally writes
+  `dist/canvas-node-align-<version>.zip`.
+- `tools/check-manifest.mjs` now also fails when `package.json` has no
+  `build` / `build:plugin` / `compile` script, and exposes a
+  `validateManifest()` export so the build can reuse it without spawning a
+  second Node process.
+- The release workflow runs `npm run build` before attesting, so a broken build
+  script fails CI instead of silently downgrading the directory's check.
 
 **Changed**
 

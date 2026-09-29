@@ -204,24 +204,29 @@ Every call is feature-detected or wrapped in a fallback, so a rename in a future
 ## Development
 
 ```
-main.js                        plugin source (plain ES2017, no build step, no dependencies)
+main.js                        plugin source (plain ES2017, no bundler, no dependencies)
 styles.css                     all rendering rules
 manifest.json                  plugin manifest
 versions.json                  version -> minimum app version
 test/align.test.js             unit tests for the pure functions
-tools/set-author.mjs           fills in the author and GitHub placeholders
+tools/build.mjs                production build (npm run build)
 tools/check-manifest.mjs       validates metadata against the directory's rules
+tools/set-author.mjs           fills in the author and GitHub placeholders
 tools/install.sh               copies the plugin into a vault for testing
 docs/SUBMISSION.md             how to cut a release and submit to the directory
 .github/workflows/release.yml  creates the GitHub release on tag push
 ```
 
-There is no build step: `main.js` is written by hand and loaded directly, and there are no runtime dependencies.
+There is no bundler: `main.js` is written by hand and loaded directly, and there are no runtime or build dependencies.
 
 ```bash
-npm run verify                  # node --check main.js && node test/align.test.js
+npm run build                   # verify the release payload — this is what the directory runs
+npm run build -- --zip          # ... and write dist/canvas-node-align-<version>.zip
+npm run verify                  # build + unit tests
 tools/install.sh "/path/to/vault"
 ```
+
+**Why a build script exists even though nothing is compiled.** The community directory runs the first script it finds in the order `build`, `build:plugin`, `compile`, and compares the result against the committed source, to verify that a release was built from the repository it claims to come from. With none of those scripts present it reports that build verification could not run. So `npm run build` parses `main.js` in-process, validates the metadata, checks that the three files Obsidian downloads are present and BOM-free, and prints their sizes and sha256 hashes so they can be held against the release assets. It deliberately never rewrites a tracked file: run it twice and the hashes are identical, which is the property the directory is looking for.
 
 The tests slice the pure functions out of `main.js` and run them through `new Function`, so what is tested is exactly what ships. 116 assertions cover both axes' markers, idempotent replacement, clearing, **"setting one axis never wipes the other"**, list/heading safety, Windows line endings, class-name cleanup (including that the two class prefixes never mistake each other), frontmatter merging, and a set of CSS guards that fail the build if a vertical selector loses the specificity it needs to beat Obsidian's own stylesheet.
 

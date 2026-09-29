@@ -5,15 +5,18 @@
   "author": "jiangbianyan-gif",
   "license": "MIT",
   "private": true,
+  "main": "main.js",
   "repository": {
     "type": "git",
     "url": "https://github.com/jiangbianyan-gif/obsidian-canvas-node-align.git"
   },
   "scripts": {
-    "test": "node test/align.test.js",
+    "build": "node tools/build.mjs",
+    "release:zip": "node tools/build.mjs --zip",
+    "test": "node test/align.test.js && node test/build.test.mjs",
     "check": "node --check main.js",
     "check:manifest": "node tools/check-manifest.mjs",
-    "verify": "npm run check && npm run check:manifest && npm test"
+    "verify": "npm run build && npm test"
   },
   "engines": {
     "node": ">=18"

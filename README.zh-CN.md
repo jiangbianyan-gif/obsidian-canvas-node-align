@@ -175,11 +175,12 @@ Obsidian 的卡片正文其实已经是一套纵向弹性布局：`.markdown-pre
 ## 开发
 
 ```
-main.js                       插件源码（ES2017，无构建步骤、无依赖）
+main.js                       插件源码（ES2017，无打包器、无依赖）
 styles.css                    全部渲染规则
 manifest.json                 插件清单
 versions.json                 版本 → 最低主程序版本
 test/align.test.js            纯函数单测
+tools/build.mjs               生产构建（npm run build）
 tools/set-author.mjs          一次性替换作者与 GitHub 占位符
 tools/check-manifest.mjs      按官方规则校验清单字段
 tools/install.sh              把插件装进指定库，方便本地测试
@@ -187,12 +188,16 @@ docs/SUBMISSION.md            发版与提交市场的完整清单
 .github/workflows/release.yml 打 tag 时自动建 Release
 ```
 
-没有打包流程，`main.js` 手写后直接被加载。
+没有打包流程，`main.js` 手写后直接被加载，运行时与构建期都没有依赖。
 
 ```bash
-npm run verify                  # node --check main.js && node test/align.test.js
+npm run build                   # 校验发布产物 —— 市场扫描跑的就是这条
+npm run build -- --zip          # 顺带产出 dist/canvas-node-align-<版本>.zip
+npm run verify                  # 构建 + 单测
 tools/install.sh "/库的路径"
 ```
+
+**既然不需要编译，为什么还要有构建脚本。** 社区目录会按 `build` → `build:plugin` → `compile` 的顺序取**找到的第一个**脚本跑一遍，再拿结果和仓库里已提交的源码比对，以此确认「发布出来的东西确实是从这个仓库构建的」。三者都没有时，它就报「构建验证无法运行」。所以 `npm run build` 做的是：在进程内解析 `main.js`、校验元数据、检查 Obsidian 要下载的三个文件齐全且没有 BOM，并打印它们的大小与 sha256，方便和 Release 资产逐一对上。它**刻意不重写任何已提交文件** —— 连跑两次哈希完全一致，而这正是目录在检查的那个性质。
 
 单测的做法是**从 `main.js` 里切出纯函数再用 `new Function` 执行**，测的就是实际发布的那份代码。116 条断言覆盖两个方向的标记读写、幂等替换、清除、**「设一个方向不会抹掉另一个方向」**、列表/标题语法安全、Windows 换行、类名清理（含两个前缀互不误伤）、frontmatter 合并，以及一把 CSS 守卫：垂直选择器一旦丢了足够的权重就直接让测试失败。
 

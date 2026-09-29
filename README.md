@@ -28,8 +28,11 @@ Also included: a command to align **every card on the current canvas** at once.
 
 ## Installation
 
-### Community plugins
-Not on the community list yet — it is pending review in the [community directory](https://community.obsidian.md). Until then, use one of the options below.
+### Community plugins (recommended)
+Settings → Community plugins → Browse → search **Canvas Node Align** → Install → Enable.
+
+> The entry has passed the automated review in the [community directory](https://community.obsidian.md).
+> If it does not show up in Browse yet the directory has not refreshed — use one of the options below.
 
 ### Manual
 1. Download `main.js`, `manifest.json` and `styles.css` from the latest release.
@@ -42,10 +45,15 @@ Add `jiangbianyan-gif/obsidian-canvas-node-align` in the [BRAT](https://github.c
 ### Requirements
 Obsidian **1.5.0** or newer. Developed and tested on **1.13.7**.
 
+> **Language:** the plugin's menus, commands, notices and settings tab are
+> currently **in Chinese**. The English glosses below map each label to what it
+> does, so the plugin is usable either way; localising the UI is on the list.
+
 ## Usage
 
 ### Card text, per card
-Right-click a card → **卡片文字对齐** → pick one of 左对齐 / 居中 / 右对齐 / 两端对齐 / 清除.
+Right-click a card → **卡片文字对齐** (*Card text alignment*) → pick one of
+**左对齐** / **居中** / **右对齐** / **两端对齐** / **清除** (*left / center / right / justify / clear*).
 
 Under the hood this inserts a small plain-text marker at the end of the card's first line:
 
@@ -66,8 +74,18 @@ You can also type these by hand — the plugin is only a convenient way to write
 
 The marker goes at the **end of the first line**, never at the start: a leading marker would break block syntax such as `- item` or `# heading`.
 
+**Two layers, one feature** — this is how the plugin keeps your `.canvas` files standard:
+
+| Layer | What it does | Why it exists |
+|---|---|---|
+| **Data** | writes the marker into the card's text | so the alignment survives a new machine, a temporarily disabled plugin, or a plain CSS snippet. Apart from that piece of text, nothing non-standard is ever written to the `.canvas` file |
+| **Render** | adds a `cta-card-<alignment>` class to the card element at runtime | so the stylesheet can act on it. Deliberately **not** done with CSS `:has()` — the community directory's CSS linter flags that as a performance warning, and a class match is the cheaper equivalent |
+
+Hand-written markers work the same way: the plugin reads every card's text whenever
+a canvas is opened, and adds the class for any marker it finds.
+
 ### Group / edge / card labels, per item
-Right-click the group (or edge, or a file card) → **…标签对齐** → pick an alignment.
+Right-click the group (or edge, or a file card) → **…标签对齐** (*… label alignment*) → pick an alignment.
 
 These three cannot use text markers. Obsidian renders them with `setText()` / `textContent`, so an HTML marker would just show up as literal garbage. Instead the plugin adds a CSS class to the element at runtime and records the choice in its own data file.
 

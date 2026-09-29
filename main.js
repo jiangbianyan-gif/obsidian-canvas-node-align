@@ -73,6 +73,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // 运行时挂的类名前缀（CSS 里一一对应）
+const CARD_CLS   = 'cta-card-';    // 挂在卡片元素（.canvas-node）上
 const GROUP_CLS  = 'cta-group-';
 const PATH_CLS   = 'cta-path-';
 const NLABEL_CLS = 'cta-nlabel-';
@@ -136,6 +137,21 @@ function clearAlignClasses(el, prefixes) {
     }
   }
   kill.forEach(function (c) { el.classList.remove(c); });
+}
+
+// 元素当前挂的是哪个对齐？没有则返回 null。
+// 用来判断「需要不需要动 DOM」——已经一致就别碰，省掉一次样式重算。
+// 只有前缀、后面没跟对齐名（如 "cta-card-"）视为没设，返回 null。
+function readAlignClass(el, prefixes) {
+  if (!el || !el.classList) return null;
+  for (let i = 0; i < el.classList.length; i++) {
+    const c = el.classList.item(i);
+    if (c == null) continue;
+    for (let j = 0; j < prefixes.length; j++) {
+      if (c.indexOf(prefixes[j]) === 0) return c.slice(prefixes[j].length) || null;
+    }
+  }
+  return null;
 }
 
 /* ---------- C. 笔记 frontmatter 的 cssclasses 处理 ---------- */
@@ -494,12 +510,22 @@ module.exports = class CanvasNodeAlign extends Plugin {
     const view = this.activeCanvasView();
     const cards = view ? this.textNodesOf(view.canvas).length : -1;
 
+    // 真挂了运行时类名的卡片有几张（新的渲染机制就是靠它，必须能看到）
+    let cardCls = -1;
+    if (view && view.canvas && view.canvas.nodes && typeof view.canvas.nodes.forEach === 'function') {
+      cardCls = 0;
+      view.canvas.nodes.forEach((n) => {
+        if (n && n.nodeEl && readAlignClass(n.nodeEl, [CARD_CLS])) cardCls++;
+      });
+    }
+
     const lines = [
       'Canvas Node Align v' + v + ' —— 插件正在运行',
       '本次加载：' + (this._loadedAt || '未知'),
       '右键子菜单：' + (this.useSubmenu ? '支持' : '不支持，已回退平铺菜单'),
       '--cta-card 变量：' + (cssVar ? '"' + cssVar + '"（样式已生效）' : '（空，样式没生效）'),
       '当前白板文本卡：' + (cards < 0 ? '不在白板视图' : cards + ' 张'),
+      '其中已挂对齐类名：' + (cardCls < 0 ? '不在白板视图' : cardCls + ' 张'),
       '各位置默认对齐：' + TARGETS.map(function (t) {
         return t.label + ' ' + (this.settings.defaults[t.key] || '-');
       }, this).join(' · '),
@@ -563,19 +589,42 @@ module.exports = class CanvasNodeAlign extends Plugin {
       if (!isTextNode(node)) continue;
       canvas = canvas || node.canvas;
 
+      // ① 持久层：把标记写进卡片文字。
+      //    它是"数据"，换电脑、临时禁用插件、只用 CSS 片段时都靠它还原。
       const before = String(node.text == null ? '' : node.text);
       const after = withAlign(before, mode);
-      if (after === before) continue;      // 已经是这个对齐，不制造无用的历史记录
+      if (after !== before) {
+        writeText(node, after);
+        changed++;
+      }
 
-      writeText(node, after);
-      changed++;
+      // ② 渲染层：给卡片元素挂 / 摘类名，CSS 直接靠类名生效。
+      //    ★ 这里不能跟着 changed 一起 continue：文字已经是目标对齐、
+      //      但元素上的类名还没挂上时（例如刚重渲染过、或用户手抄了标记），
+      //      必须补上，否则"数据对了可字没动"。
+      this.applyCardAlign(node, mode);
     }
 
-    if (!changed) return;
-    if (canvas) saveCanvas(canvas);
+    if (changed && canvas) saveCanvas(canvas);
+    if (!changed) return;                  // 没有实际改动就不发提示、不写撤销历史
 
     const name = mode ? (ALIGN_BY_KEY[mode] || {}).label || mode : '默认';
     new Notice('已设置 ' + changed + ' 张卡片的文字对齐：' + name);
+  }
+
+  // 把卡片元素上的对齐类名设成 align（传 null / undefined 表示摘掉）。
+  // 类名挂在 node.nodeEl（即 .canvas-node）上，而不是 .canvas-node-content：
+  // nodeEl 在节点构造时就存在，比"等内容元素渲染出来"可靠，且内容重渲染后不会丢。
+  applyCardAlign(node, align) {
+    const el = node && node.nodeEl;
+    if (!el || !el.classList) return false;
+
+    const want = align || null;
+    if (readAlignClass(el, [CARD_CLS]) === want) return true;   // 已经一致，不动 DOM
+
+    clearAlignClasses(el, [CARD_CLS]);
+    if (want) el.classList.add(CARD_CLS + want);
+    return true;
   }
 
   reportAlign(nodes) {
@@ -640,6 +689,12 @@ module.exports = class CanvasNodeAlign extends Plugin {
   // 把某个白板里所有记录过的对齐重新挂一遍
   reapplyCanvas(canvas) {
     if (!canvas) return;
+
+    // 卡片正文：对齐记在卡片文字里，所以每张文本卡都要读一遍再挂类名。
+    // 切换标签、缩放重排都会重建 DOM 并丢掉运行时类名，这一步是恢复的关键。
+    // ★ 必须在 canvasPath 早退之前做 —— 拿不到文件路径（比如未保存的板）也要能恢复。
+    this.reapplyCards(canvas);
+
     const path = canvasPath(canvas);
     if (!path) return;
     const bucket = this.settings.perItem[path];
@@ -653,6 +708,16 @@ module.exports = class CanvasNodeAlign extends Plugin {
       if (!obj) return;
       const prefix = kind === 'path' ? PATH_CLS : (kind === 'group' ? GROUP_CLS : NLABEL_CLS);
       this.applyOne(canvas, kind, obj, align, prefix);
+    });
+  }
+
+  // 逐张读卡片文字里的标记，把类名重新挂上。手抄标记的卡片也一并照顾到。
+  reapplyCards(canvas) {
+    if (!canvas || !canvas.nodes || typeof canvas.nodes.forEach !== 'function') return;
+    canvas.nodes.forEach((node) => {
+      if (!isTextNode(node)) return;
+      const data = (node.getData && node.getData()) || {};
+      this.applyCardAlign(node, readAlign(data.text));
     });
   }
 
@@ -708,7 +773,7 @@ module.exports = class CanvasNodeAlign extends Plugin {
       this.app.workspace.on('layout-change', () => this.scheduleReapply())
     );
 
-    // 白板内部增删节点时也要跟上；只在确实有单独设置时才观察，避免白耗性能
+    // 白板内部增删节点时也要跟上（节点重建会丢掉运行时类名）
     this.observed = new WeakSet();
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', () => this.observeActive())
@@ -716,14 +781,17 @@ module.exports = class CanvasNodeAlign extends Plugin {
     this.scheduleReapply();
   }
 
+  // 白板内部增删节点时也要跟上。
+  // ★ 这里**不能**再用 countPerItem() 当闸门：卡片正文的对齐记在卡片文字里、
+  //   不进 settings.perItem，所以"没有逐项设置"的白板同样需要恢复类名。
+  //   代价已经压到很低：重挂时逐张比对类名，一致就完全不碰 DOM；
+  //   而且观察器不看 attributes，我们挂类名不会反过来触发它。
   scheduleReapply() {
-    if (!this.countPerItem()) return;
     if (this._reapplyTimer) window.clearTimeout(this._reapplyTimer);
     this._reapplyTimer = window.setTimeout(() => this.reapplyAll(), 200);
   }
 
   observeActive() {
-    if (!this.countPerItem()) return;
     const view = this.activeCanvasView();
     if (!view) return;
     const wrapper = view.containerEl && view.containerEl.querySelector('.canvas-wrapper');

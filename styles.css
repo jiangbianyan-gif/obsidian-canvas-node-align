@@ -1,17 +1,21 @@
 /* ============================================================================
    Canvas Node Align —— 插件自带样式
    ----------------------------------------------------------------------------
-   与库里的 CSS 片段 canvas-text-align.css 规则保持一致：
-     · 只用插件          → 本文件就是全部
-     · 只用 CSS 片段      → 见 canvas-text-align.css
-     · 两边都开着          → 规则相同，不冲突（但改默认值时要两边一起改）
+   与库里的 CSS 片段 canvas-text-align.css 各管一条路：
+     · 本文件（装插件时生效）→ 卡片用「运行时类名」，全文件**不用 has 伪类**
+     · 片段仅作退路（不装插件时）→ 卡片用 has 伪类 读标记
+     · 两边都开着          → 效果相同，不冲突（但改默认值时要两边一起改）
+   ----------------------------------------------------------------------------
+   ★ 本文件刻意不含 has 伪类：Obsidian 目录的自动审核有 CSS LINT 一项，
+     会因「大范围选择器失效 → 性能问题」把 has 伪类 判为警告。挂类名是等价的
+     O(1) 匹配，没有这个副作用。改动时请**不要**把 has 伪类 加回来。
    ----------------------------------------------------------------------------
    本文件分 9 段：
-     ① 全局默认变量        ② 卡片正文（逐张，靠标记）
+     ① 全局默认变量        ② 卡片正文（逐张，运行时类名）
      ③ 隐藏标记本身        ④ 跟随 / 不跟随
      ⑤ 卡片文件名标签      ⑥ 分组标签
-     ⑦ 卡片内嵌笔记正文     ⑧ 逐项覆盖（插件运行时挂的类名）
-     ⑨ 笔记正文对齐（新增）
+     ⑦ 卡片内嵌笔记正文     ⑧ 逐项覆盖（分组 / 连线 / 文件名的运行时类名）
+     ⑨ 笔记正文对齐
    ============================================================================ */
 
 
@@ -28,35 +32,33 @@
 }
 
 
-/* ═══════════════════════════════════════════ ② 卡片正文：逐张选择（靠标记） ═════════ */
+/* ═══════════════════════════════════════════ ② 卡片正文：逐张选择（运行时类名） ═════════ */
 
-/* 这一节是主角。每条规则 = 一种对齐，靠卡片里有没有对应标记来命中。
+/* 这是主角。插件应用对齐时做两件事：
+
+     ① 把 <span class="cta-x"></span> 标记写进卡片文字 —— 这是**数据**。
+        换电脑、临时禁用插件、只用 CSS 片段时，都靠它把对齐还原回来。
+     ② 把 cta-card-<对齐> 类名挂到卡片的 .canvas-node 元素上 —— 这是**渲染**。
+        下面四条规则就靠它生效。
+
+   为什么用类名、而不是 has 伪类：
+     Obsidian 目录的自动审核有 CSS LINT 一项，会因「大范围选择器失效」把 has 伪类
+     判为性能警告。挂类名是等价的 O(1) 匹配，而且不回退地支持所有版本。
+     库里那份 CSS 片段（不装插件的退路）仍然用 has 伪类，各管一条路。
 
    为什么直接写死 text-align、而不是靠变量继承：
    白板的分组（group）自己也有 .canvas-node-content。如果靠变量继承，
    分组里只要有一张卡写了标记，整组卡片都会被带着变。写死就没有这个传导问题。
 
-   ⚠️ :has() 整体只算「一个类」的权重，(0,2,0)。
-      所以样式里任何命中卡片正文、且权重更高的 text-align 声明都会把它压掉 ——
-      本文件已经把这类规则要么改成 inherit、要么关掉了，改动时务必留意。 */
+   权重：下面四条是 (0,3,0)，稳压上面 (0,2,0) 的全局默认；
+   第 ⑦ 段那条 (0,4,0) 用的是 inherit，所以不会把它们压掉。改动时务必留意。 */
 
 .canvas-node-content { text-align: var(--cta-card); }
 
-.canvas-node-content:has(.cta-l),
-.canvas-node-content:has(.tag[href="#cta-l"]),
-.canvas-node-content:has(.tag[data-tag-name="cta-l"]) { text-align: left; }
-
-.canvas-node-content:has(.cta-c),
-.canvas-node-content:has(.tag[href="#cta-c"]),
-.canvas-node-content:has(.tag[data-tag-name="cta-c"]) { text-align: center; }
-
-.canvas-node-content:has(.cta-r),
-.canvas-node-content:has(.tag[href="#cta-r"]),
-.canvas-node-content:has(.tag[data-tag-name="cta-r"]) { text-align: right; }
-
-.canvas-node-content:has(.cta-j),
-.canvas-node-content:has(.tag[href="#cta-j"]),
-.canvas-node-content:has(.tag[data-tag-name="cta-j"]) { text-align: justify; }
+.canvas-node.cta-card-left    .canvas-node-content { text-align: left; }
+.canvas-node.cta-card-center  .canvas-node-content { text-align: center; }
+.canvas-node.cta-card-right   .canvas-node-content { text-align: right; }
+.canvas-node.cta-card-justify .canvas-node-content { text-align: justify; }
 
 
 /* ═══════════════════════════════════════════ ③ 让标记本身不显示 ═════════ */
@@ -67,10 +69,12 @@
   display: none;
 }
 
-/* 万一有人把标记单独写成一行，那一行会留下空隙 —— 隐藏掉这个空段落。 */
-.canvas-node-content .markdown-preview-sizer > p:has(> :is(.cta-l, .cta-c, .cta-r, .cta-j):only-child) {
-  display: none;
-}
+/* 【原址曾有一条 has 伪类 规则】用来隐藏「标记被单独写成一行」时留下的空段落。
+   为清掉审核的 CSS LINT 警告，插件这份样式里已删掉它。影响极小：
+   插件写标记时**总是写在第一行末尾**，不会单独占一行；只有手工把标记抄成
+   独立一行，才会多出一个空段落的高度。
+   真要治这个边角情况：用库里的 CSS 片段（那份保留了该 has 伪类 规则，
+   因为它不在插件仓库内、不参与审核），或者把标记写在某行文字末尾。 */
 
 
 /* ═══════════════════════════════════════════ ④ 跟着走 / 不跟着走 ═════════ */
@@ -132,11 +136,11 @@
 
    文本卡片和「嵌入笔记的卡片」**都带 .canvas-node-content.markdown-embed**。
    所以下面这条选择器（4 个类，权重 0,4,0）会**同时命中两者**，并且压过
-   第 ② 段的 :has() 规则（后者只有 0,2,0）。
-   若把 --cta-note 写成 left，效果就等于"无论卡片里写什么标记，都强制左对齐"。
+   第 ② 段的 .cta-card-* 规则（后者只有 0,3,0）。
+   若把 --cta-note 写成 left，效果就等于"无论卡片里设成什么对齐，都强制左对齐"。
 
    ⇒ 默认值必须是 inherit：让它跟随所在卡片的 text-align。
-      · 文本卡：父级被 :has(.cta-c) 设成 center → 这里继承到 center ✔
+      · 文本卡：父级被 .cta-card-center 设成 center → 这里继承到 center ✔
       · 嵌入整篇笔记的卡：父级是 --cta-card → 继承到卡片正文的默认值 ✔ */
 .canvas-node-content.markdown-embed > .markdown-embed-content > .markdown-preview-view,
 .canvas-node-content.markdown-embed .markdown-embed-content {

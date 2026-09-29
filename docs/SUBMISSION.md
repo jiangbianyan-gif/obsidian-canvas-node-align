@@ -33,21 +33,38 @@ The release must not be a draft and must not be marked as a pre-release.
 
 ## Cutting a release
 
+### Option A — let the workflow do it (preferred)
+
+Run **Actions → Release → Run workflow**. Leave the version input empty and the
+workflow reads `manifest.json`. It then:
+
+1. syntax-checks `main.js`
+2. runs `tools/check-manifest.mjs` (metadata rules + version consistency + tag match)
+3. runs the unit tests
+4. generates **build provenance** for the three assets
+5. creates the release, tagged and named after the version
+
+Step 4 is why this is the preferred route: the community directory reports
+"release assets are missing build attestation" for releases published by hand.
+
+### Option B — tag and push
+
 ```bash
-# 1. bump versions in manifest.json + versions.json + package.json
+# 1. bump the version in manifest.json + versions.json + package.json
+#    (and refresh package-lock.json: npm install --package-lock-only)
 # 2. run the checks the CI runs
 npm run verify
 
-# 3. commit, tag, push
-git add -A
-git commit -m "2.0.0"
-git tag 2.0.0
+# 3. tag with the version *exactly* — no "v" prefix
+git commit -am "<version>"
+git tag <version>
 git push origin main --tags
 ```
 
-The workflow then creates the release with the three required assets attached.
+A tag push triggers the same workflow, so the release still gets its attestation.
 
-To test locally before tagging, `tools/install.sh "<vault path>"` copies the plugin into a vault's `.obsidian/plugins/canvas-node-align/`.
+To test locally first, `tools/install.sh "<vault path>"` copies the plugin into a
+vault's `.obsidian/plugins/canvas-node-align/`.
 
 ## Submitting to the community directory
 
@@ -74,8 +91,28 @@ Checked by the release workflow, but worth knowing:
 - `isDesktopOnly`: `false` — only public Obsidian APIs plus a few feature-detected Canvas internals are used, no Node or Electron APIs.
 - Command IDs must not repeat the plugin ID; Obsidian prefixes them automatically. The IDs here are `align-*`, `canvas-all-*`, `note-*`.
 
+## What the automated review actually reports
+
+Observed on the first submission (2.0.0). Results come back grouped, each item
+rated as an **error**, a **warning**, a **recommendation** or a **pass**. Only
+errors block installation.
+
+| Group | Item | How this repository answers it |
+| --- | --- | --- |
+| Release | *Release name does not include the version* (warning) | the workflow names the release after the version |
+| Release | *Release assets are missing build attestation* (recommendation) | `actions/attest-build-provenance` in `release.yml` |
+| Network requests | *No suspicious network patterns found* (pass) | the plugin makes no network calls at all |
+| CSS LINT | *Avoid `has` — broad selector invalidation is a performance problem* (warning) | card alignment uses a runtime class name; `styles.css` contains no `has` selector, and a unit test fails if one comes back |
+| Dependencies | *No vulnerable dependencies found* (pass) | zero runtime dependencies |
+| Code obfuscation | *No obfuscation detected* (pass) | plain readable ES2017 |
+| Build verification | *No JavaScript lockfile found, build verification cannot run* (recommendation) | `package-lock.json` is committed |
+
+The directory also re-scans after **every release**, and verifies that the
+release assets match what is committed on the default branch. Keep `main.js`,
+`manifest.json` and `styles.css` byte-identical between the two.
+
 ## A caveat worth remembering
 
-The plugin reaches into a few Canvas internals that are not in the public API docs (`node.labelEl`, `edge.labelElement.textareaEl`, the `canvas:node-menu` / `canvas:edge-menu` / `canvas:selection-menu` events, `canvas.nodes` / `canvas.edges` / `canvas.selection`, `node.setText()`, `canvas.requestSave()`).
+The plugin reaches into a few Canvas internals that are not in the public API docs (`node.labelEl`, `node.nodeEl`, `edge.labelElement.textareaEl`, the `canvas:node-menu` / `canvas:edge-menu` / `canvas:selection-menu` events, `canvas.nodes` / `canvas.edges` / `canvas.selection`, `node.setText()`, `canvas.requestSave()`).
 
 Every call site is feature-detected or wrapped in a fallback, so a rename in a future Obsidian release degrades one feature at a time instead of breaking the plugin — but it is still worth re-testing after each Obsidian update. See the README's *Compatibility notes* table for the full list.

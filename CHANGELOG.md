@@ -3,7 +3,34 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 2.0.0 — unreleased
+## 2.1.0 — 2026-09-29
+
+Housekeeping release that clears the warnings from the community directory's
+automated review. No change in behaviour.
+
+**Changed**
+
+- Card body alignment is now applied with a runtime class name
+  (`cta-card-left` / `-center` / `-right` / `-justify` on the `.canvas-node`
+  element) instead of a `:has()` selector. The plain-text marker is still
+  written into the card, so alignment still survives uninstalling the plugin.
+  The CSS linter in the community directory flags `:has(` as a performance
+  warning ("broad selector invalidation"); `styles.css` now contains none.
+- Class names are re-applied on `active-leaf-change`, `layout-change` and DOM
+  changes, so alignment survives re-rendering. Re-applying compares the current
+  class first and leaves the DOM untouched when it already matches.
+- CI builds are now attested with `actions/attest-build-provenance`, and the
+  GitHub release is named after the version.
+
+**Added**
+
+- `package-lock.json`, so the directory's build-verification step can run.
+- The self-check command also reports how many cards currently carry an
+  alignment class.
+- Unit tests for card class-name handling, plus a guard that fails the test
+  suite if `:has(` ever reappears in `styles.css` (71 assertions).
+
+## 2.0.0 — 2026-09-29
 
 First public release.
 

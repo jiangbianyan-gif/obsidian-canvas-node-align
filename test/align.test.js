@@ -27,7 +27,7 @@ function slice(startMark, endMark) {
 const consts = slice('// 四种对齐方式。letter', 'class CanvasNodeAlignSettingTab');
 const code =
   consts +
-  '\nreturn {readAlign, stripMarks, withAlign, clearAlignClasses, toArray, mergeNoteClass, ALIGN_BY_KEY, GROUP_CLS, PATH_CLS, NLABEL_CLS};';
+  '\nreturn {readAlign, stripMarks, withAlign, clearAlignClasses, readAlignClass, toArray, mergeNoteClass, ALIGN_BY_KEY, CARD_CLS, GROUP_CLS, PATH_CLS, NLABEL_CLS};';
 const A = new Function(code)();
 
 let pass = 0;
@@ -145,6 +145,36 @@ eq(A.mergeNoteClass('cta-note-left', 'center'), ['cta-note-center'], 'accepts th
 eq(A.mergeNoteClass(['my-class'], null), ['my-class'], 'clearing keeps the user\'s classes');
 eq(A.mergeNoteClass(['cta-note-center'], null), [], 'clearing leaves an empty array when nothing else is there');
 eq(A.mergeNoteClass(['cta-note-left', 'cta-note-right'], 'center'), ['cta-note-center'], 'clears several stale classes at once');
+
+/* ---------- readAlignClass (card class names, added in 2.1.0) ---------- */
+eq(A.readAlignClass(mockEl(['canvas-node', 'cta-card-center', 'x']), [A.CARD_CLS]), 'center', 'reads the card class');
+eq(A.readAlignClass(mockEl(['cta-card-left']), [A.CARD_CLS]), 'left', 'reads left');
+eq(A.readAlignClass(mockEl(['cta-card-justify']), [A.CARD_CLS]), 'justify', 'reads justify');
+eq(A.readAlignClass(mockEl(['canvas-node']), [A.CARD_CLS]), null, 'no class returns null');
+eq(A.readAlignClass(mockEl(['cta-card-']), [A.CARD_CLS]), null, 'a bare prefix counts as unset');
+eq(A.readAlignClass(mockEl(['cta-ness']), [A.CARD_CLS]), null, 'a non-matching prefix returns null');
+eq(A.readAlignClass(null, [A.CARD_CLS]), null, 'null element returns null');
+eq(A.readAlignClass({}, [A.CARD_CLS]), null, 'an element without classList returns null');
+eq(A.readAlignClass(mockEl(['cta-path-right']), [A.CARD_CLS, A.PATH_CLS]), 'right', 'works with several prefixes');
+// A full read -> clear -> set round trip, the way the plugin does it.
+el = mockEl(['canvas-node', 'cta-card-left', 'my-own']);
+A.clearAlignClasses(el, [A.CARD_CLS]);
+el.classList.add(A.CARD_CLS + 'right');
+eq(el.classes, ['canvas-node', 'cta-card-right', 'my-own'], 'clear-then-set keeps unrelated classes');
+eq(A.readAlignClass(el, [A.CARD_CLS]), 'right', 'reads back the new value');
+
+/* ---------- stylesheet guard ----------
+ * The community directory runs a CSS linter that flags `:has(` as a performance
+ * warning ("broad selector invalidation"). Card alignment is done with runtime
+ * class names instead, so the rule must never come back. */
+const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+const cssNoComment = css.replace(/\/\*[\s\S]*?\*\//g, '');
+eq(/:has\s*\(/.test(cssNoComment), false, 'styles.css rules contain no :has(');
+eq(/:has\s*\(/.test(css), false, 'styles.css does not even mention :has( in comments');
+eq(/\.canvas-node\.cta-card-left\s+\.canvas-node-content/.test(cssNoComment), true, 'has the cta-card-left rule');
+eq(/\.canvas-node\.cta-card-center\s+\.canvas-node-content/.test(cssNoComment), true, 'has the cta-card-center rule');
+eq(/\.canvas-node\.cta-card-right\s+\.canvas-node-content/.test(cssNoComment), true, 'has the cta-card-right rule');
+eq(/\.canvas-node\.cta-card-justify\s+\.canvas-node-content/.test(cssNoComment), true, 'has the cta-card-justify rule');
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

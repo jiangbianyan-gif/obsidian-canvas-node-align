@@ -129,16 +129,52 @@ if (!fs.existsSync(path.join(ROOT, 'README.md'))) problems.push('README.md must 
 if (!fs.existsSync(path.join(ROOT, 'LICENSE'))) problems.push('LICENSE must exist in the repository root');
 
 /* ---------- release tag ---------- */
+// Exact match only. We deliberately do NOT strip a leading "v": Obsidian builds
+// the download URL as releases/download/<manifest.version>/main.js, so a tag of
+// "v2.1.0" makes it request ".../download/2.1.0/main.js" and get a 404.
+// GitHub's own release page suggests "v" prefixes for general projects; that
+// advice does not apply to Obsidian plugins.
 if (tag) {
-  const normalized = tag.replace(/^v/, '');
-  if (normalized !== m.version) {
-    problems.push(
-      'tag "' + tag + '" does not match manifest version "' + m.version +
-      '". Obsidian downloads assets from the release whose tag equals the manifest version.'
-    );
+  if (tag !== m.version) {
+    if (tag.replace(/^v/, '') === m.version) {
+      problems.push(
+        'tag "' + tag + '" has a "v" prefix. Obsidian downloads assets from the release whose tag ' +
+        'equals the manifest version exactly, so this would 404. Use "' + m.version + '".'
+      );
+    } else {
+      problems.push(
+        'tag "' + tag + '" does not match manifest version "' + m.version +
+        '". Obsidian downloads assets from the release whose tag equals the manifest version.'
+      );
+    }
   } else {
-    notes.push('tag ' + tag + ' matches the manifest version');
+    notes.push('tag ' + tag + ' matches the manifest version exactly');
   }
+}
+
+/* ---------- the same version must appear in package.json ---------- */
+// Three files carry the version; forgetting one is the easiest release mistake.
+const pkgPath = path.join(ROOT, 'package.json');
+if (fs.existsSync(pkgPath)) {
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  if (pkg.version !== m.version) {
+    problems.push('package.json version is "' + pkg.version + '" but manifest.json says "' + m.version + '"');
+  } else {
+    notes.push('package.json version matches');
+  }
+}
+
+const lockPath = path.join(ROOT, 'package-lock.json');
+if (fs.existsSync(lockPath)) {
+  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  const lockVersion = lock.version || (lock.packages && lock.packages[''] && lock.packages[''].version);
+  if (lockVersion && lockVersion !== m.version) {
+    problems.push('package-lock.json version is "' + lockVersion + '" but manifest.json says "' + m.version + '" — run: npm install --package-lock-only');
+  } else if (lockVersion) {
+    notes.push('package-lock.json version matches');
+  }
+} else {
+  notes.push('package-lock.json is absent (the directory will report that build verification cannot run)');
 }
 
 /* ---------- report ---------- */

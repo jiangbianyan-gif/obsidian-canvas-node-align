@@ -36,6 +36,14 @@ jobs:
         with:
           node-version: 22
 
+      # The directory installs before it runs the build script, so a
+      # package.json / package-lock.json mismatch there would silently
+      # downgrade build verification to "could not run" — the exact
+      # recommendation this workflow exists to avoid. Fail here instead.
+      # There are no dependencies, so this stays fast.
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
       # Which version are we publishing? Tag push -> the tag; manual run -> the
       # input, or manifest.json if it was left empty.
       - name: Resolve version

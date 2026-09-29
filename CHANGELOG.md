@@ -3,6 +3,25 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.2.1 — 2026-09-30
+
+**Release tooling.** No changes to the plugin itself. 2.2.0 was never
+published: its release was created by hand and pointed at a commit that
+predated the build tooling, so the directory's build-verification check
+could not run. 2.2.1 re-releases the same code with the tooling in place.
+
+- Added a `build` script (`tools/build.mjs`). The community directory runs
+  the first script it finds in the order `build` / `build:plugin` /
+  `compile` and verifies the result matches what is committed; this script
+  parses `main.js`, validates the metadata, confirms the three release
+  files are present and BOM-free, and prints their sizes and SHA-256
+  hashes. It never rewrites committed files (byte-identical on re-runs).
+- The release workflow now runs `npm ci` (lockfile consistency sentinel),
+  `npm test` (both test files) and `npm run build` before attesting and
+  publishing.
+- 15 new tests for the build tooling (`test/build.test.mjs`), including
+  guards that the build script stays dependency-free and never shells out.
+
 ## 2.2.0 — 2026-09-29
 
 **Vertical alignment.** Until now the plugin only controlled where a line of

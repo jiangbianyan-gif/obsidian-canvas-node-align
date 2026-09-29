@@ -5,11 +5,12 @@ Notes for whoever maintains this plugin (probably future-you).
 ## Repo map
 
 ```
-main.js                        plugin source — hand-written, no build step
+main.js                        plugin source — hand-written, no bundler
 styles.css                     all rendering rules
 manifest.json                  plugin manifest (id, version, minAppVersion, author…)
 versions.json                  version -> minimum app version
 test/align.test.js             unit tests for the pure functions
+tools/build.mjs                production build — verify the release payload (npm run build)
 tools/set-author.mjs           fills in the author and GitHub placeholders
 tools/check-manifest.mjs       validates metadata (and the tag) against the rules below
 tools/install.sh               copies the plugin into a vault for testing
@@ -38,13 +39,17 @@ The release must not be a draft and must not be marked as a pre-release.
 Run **Actions → Release → Run workflow**. Leave the version input empty and the
 workflow reads `manifest.json`. It then:
 
-1. syntax-checks `main.js`
-2. runs `tools/check-manifest.mjs` (metadata rules + version consistency + tag match)
-3. runs the unit tests
-4. generates **build provenance** for the three assets
-5. creates the release, tagged and named after the version
+1. installs with `npm ci` — the directory installs too, so a stale
+   `package-lock.json` fails here instead of disabling build verification there
+2. syntax-checks `main.js`
+3. runs `tools/check-manifest.mjs` (metadata rules + version consistency + tag match)
+4. runs the unit tests
+5. runs `npm run build` — the same command the directory runs, so a broken build
+   script fails here instead of downgrading the directory's check
+6. generates **build provenance** for the three assets
+7. creates the release, tagged and named after the version
 
-Step 4 is why this is the preferred route: the community directory reports
+Step 6 is why this is the preferred route: the community directory reports
 "release assets are missing build attestation" for releases published by hand.
 
 ### Option B — tag and push
@@ -105,7 +110,35 @@ errors block installation.
 | CSS LINT | *Avoid `has` — broad selector invalidation is a performance problem* (warning) | card alignment uses a runtime class name; `styles.css` contains no `has` selector, and a unit test fails if one comes back |
 | Dependencies | *No vulnerable dependencies found* (pass) | zero runtime dependencies |
 | Code obfuscation | *No obfuscation detected* (pass) | plain readable ES2017 |
-| Build verification | *No JavaScript lockfile found, build verification cannot run* (recommendation) | `package-lock.json` is committed |
+| Build verification | *Build verification cannot run — `package.json` needs a `build` script to reproduce the build process* (recommendation) | fixed in 2.2.0: `package.json` has `"build": "node tools/build.mjs"`. See the note below |
+
+### The build-verification recommendation
+
+Seen on the 2.1.0 review. The directory runs **the first script it finds in the
+order `build`, `build:plugin`, `compile`** and compares the result against the
+committed source, to prove a release was built from the repository it claims to
+come from. 2.1.0 had `test` / `check` / `verify` but none of those three names,
+so the check had nothing to run and reported a recommendation instead of a pass.
+
+This plugin has no bundler, so `npm run build` does not generate `main.js` — it
+*verifies* it. Parse the source, validate the metadata, confirm the three
+downloaded files are present and BOM-free, print their sizes and sha256 hashes.
+The one property that matters: **it must never rewrite a tracked file with
+different bytes**, because the directory's check is exactly "does the built
+output still equal the committed source". Running it twice leaves the hashes
+identical.
+
+Two traps worth remembering if this script is ever touched:
+
+- **Do not shell out to `node`.** `spawnSync(process.execPath, …)` fails with
+  `EBUSY` on Windows when it targets the executable that is already running, and
+  the directory's sandbox may not allow forking at all. Everything is done
+  in-process (`vm.Script` for the parse check, an imported `validateManifest()`
+  for the metadata rules).
+- **Stay dependency-free.** Anything in `devDependencies` has to install
+  cleanly in the directory's sandbox *before* the build script can run. No
+  `esbuild`, no `eslint` — the zip writer in `tools/build.mjs` is ~60 lines of
+  `zlib` and a CRC32 table precisely so that `npm ci` has nothing to fetch.
 
 The directory also re-scans after **every release**, and verifies that the
 release assets match what is committed on the default branch. Keep `main.js`,

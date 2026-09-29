@@ -61,7 +61,15 @@ jobs:
         run: node tools/check-manifest.mjs --tag "${{ steps.v.outputs.version }}"
 
       - name: Run unit tests
-        run: node test/align.test.js
+        run: npm test
+
+      # The community directory runs the first script it finds in the order
+      # build / build:plugin / compile, and compares the result with the
+      # committed source to verify the release was built from it. Running the
+      # same command here means a broken build script fails CI, instead of
+      # quietly downgrading that check to "could not run" after the release.
+      - name: Build
+        run: npm run build
 
       # The community directory recommends releasing with build provenance, so
       # users can verify these assets were built from this commit. Without it

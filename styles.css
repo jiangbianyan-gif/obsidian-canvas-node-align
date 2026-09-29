@@ -1,0 +1,194 @@
+/* ============================================================================
+   Canvas Node Align —— 插件自带样式
+   ----------------------------------------------------------------------------
+   与库里的 CSS 片段 canvas-text-align.css 规则保持一致：
+     · 只用插件          → 本文件就是全部
+     · 只用 CSS 片段      → 见 canvas-text-align.css
+     · 两边都开着          → 规则相同，不冲突（但改默认值时要两边一起改）
+   ----------------------------------------------------------------------------
+   本文件分 9 段：
+     ① 全局默认变量        ② 卡片正文（逐张，靠标记）
+     ③ 隐藏标记本身        ④ 跟随 / 不跟随
+     ⑤ 卡片文件名标签      ⑥ 分组标签
+     ⑦ 卡片内嵌笔记正文     ⑧ 逐项覆盖（插件运行时挂的类名）
+     ⑨ 笔记正文对齐（新增）
+   ============================================================================ */
+
+
+/* ═══════════════════════════════════════════ ① 全局默认（没单独设置的地方） ═════════ */
+
+/* 插件设置面板会把这些变量写到 <body> 上（body 比 :root 更靠下，
+   所以面板里的值会覆盖这里的默认值）。直接改这里的值也行。 */
+:root {
+  --cta-card:  left;      /* 白板卡片正文：left | center | right | justify */
+  --cta-note:  inherit;   /* 卡片内嵌笔记的正文：inherit = 跟随所在卡片，★别改成 left */
+  --cta-label: left;      /* 卡片文件名标签 */
+  --cta-group: center;    /* 分组标签 */
+  --cta-path:  center;    /* 连线标签（原生本来就是居中） */
+}
+
+
+/* ═══════════════════════════════════════════ ② 卡片正文：逐张选择（靠标记） ═════════ */
+
+/* 这一节是主角。每条规则 = 一种对齐，靠卡片里有没有对应标记来命中。
+
+   为什么直接写死 text-align、而不是靠变量继承：
+   白板的分组（group）自己也有 .canvas-node-content。如果靠变量继承，
+   分组里只要有一张卡写了标记，整组卡片都会被带着变。写死就没有这个传导问题。
+
+   ⚠️ :has() 整体只算「一个类」的权重，(0,2,0)。
+      所以样式里任何命中卡片正文、且权重更高的 text-align 声明都会把它压掉 ——
+      本文件已经把这类规则要么改成 inherit、要么关掉了，改动时务必留意。 */
+
+.canvas-node-content { text-align: var(--cta-card); }
+
+.canvas-node-content:has(.cta-l),
+.canvas-node-content:has(.tag[href="#cta-l"]),
+.canvas-node-content:has(.tag[data-tag-name="cta-l"]) { text-align: left; }
+
+.canvas-node-content:has(.cta-c),
+.canvas-node-content:has(.tag[href="#cta-c"]),
+.canvas-node-content:has(.tag[data-tag-name="cta-c"]) { text-align: center; }
+
+.canvas-node-content:has(.cta-r),
+.canvas-node-content:has(.tag[href="#cta-r"]),
+.canvas-node-content:has(.tag[data-tag-name="cta-r"]) { text-align: right; }
+
+.canvas-node-content:has(.cta-j),
+.canvas-node-content:has(.tag[href="#cta-j"]),
+.canvas-node-content:has(.tag[data-tag-name="cta-j"]) { text-align: justify; }
+
+
+/* ═══════════════════════════════════════════ ③ 让标记本身不显示 ═════════ */
+
+/* <span> 是空元素本来就看不见，这条是双保险；
+   顺便把「标签写法」的小胶囊也藏掉，让两种写法观感一致。 */
+.canvas-node-content :is(.cta-l, .cta-c, .cta-r, .cta-j) {
+  display: none;
+}
+
+/* 万一有人把标记单独写成一行，那一行会留下空隙 —— 隐藏掉这个空段落。 */
+.canvas-node-content .markdown-preview-sizer > p:has(> :is(.cta-l, .cta-c, .cta-r, .cta-j):only-child) {
+  display: none;
+}
+
+
+/* ═══════════════════════════════════════════ ④ 跟着走 / 不跟着走 ═════════ */
+
+/* 标题、列表项：有些主题会单独给它们设 text-align，用 inherit 拉回父级设定 */
+.canvas-node-content :is(h1, h2, h3, h4, h5, h6, li) {
+  text-align: inherit;
+}
+
+/* 代码块与表格：居中会很难读，固定左对齐。
+   想让它们也跟着卡片走？整段注释掉即可。 */
+.canvas-node-content :is(pre, code, table) {
+  text-align: left;
+}
+
+/* 卡片里的 Callout：让它跟随卡片对齐 */
+.canvas-node-content .callout-title,
+.canvas-node-content .callout-content {
+  text-align: inherit;
+}
+
+
+/* ═══════════════════════════════════════════ ⑤ 卡片文件名标签 ═════════ */
+
+/* 原生贴在卡片左上角外侧。改成水平居中要动三处，
+   其中 transform-origin 必须改成 center，否则白板缩放时标签会横向漂移。
+
+   width: 100% 是为了让 text-align 真的看得见 ——
+   标签默认宽度是「内容宽度」，那样不管设什么对齐都没有视觉效果。
+   加上后标签容器与卡片同宽，文字才谈得上靠左/居中/靠右。
+   代价：超长文件名会被 ellipsis 截断（原生是溢出显示）。 */
+.canvas-wrapper .canvas-node-label {
+  left: 50%;
+  transform-origin: bottom center;
+  transform: translate(-50%, -100%) scale(var(--zoom-multiplier));
+  width: 100%;
+  text-align: var(--cta-label);
+}
+
+
+/* ═══════════════════════════════════════════ ⑥ 分组标签 ═════════ */
+
+/* 原生贴在分组框左上角外侧，这里改成「贴顶边、水平居中」。
+   scale(var(--zoom-multiplier)) 负责让标签跟随白板缩放，**不能删**，
+   删掉后放大缩小几次就会和框对不上。
+   不想动位置、只想保留文字对齐？把 left / transform-origin / transform
+   这三行注释掉，只留 text-align 即可。 */
+.canvas-wrapper .canvas-group-label {
+  left: 50%;
+  transform-origin: bottom center;
+  transform: translate(-50%, -100%) scale(var(--zoom-multiplier));
+  text-align: var(--cta-group);
+}
+
+
+/* ═══════════════════════════════════════════ ⑦ 卡片内嵌入的笔记正文 ═════════ */
+
+/* ⚠️ 全文件最容易踩的坑，改之前务必看完：
+
+   文本卡片和「嵌入笔记的卡片」**都带 .canvas-node-content.markdown-embed**。
+   所以下面这条选择器（4 个类，权重 0,4,0）会**同时命中两者**，并且压过
+   第 ② 段的 :has() 规则（后者只有 0,2,0）。
+   若把 --cta-note 写成 left，效果就等于"无论卡片里写什么标记，都强制左对齐"。
+
+   ⇒ 默认值必须是 inherit：让它跟随所在卡片的 text-align。
+      · 文本卡：父级被 :has(.cta-c) 设成 center → 这里继承到 center ✔
+      · 嵌入整篇笔记的卡：父级是 --cta-card → 继承到卡片正文的默认值 ✔ */
+.canvas-node-content.markdown-embed > .markdown-embed-content > .markdown-preview-view,
+.canvas-node-content.markdown-embed .markdown-embed-content {
+  text-align: var(--cta-note);
+}
+
+
+/* ═══════════════════════════════════════════ ⑧ 逐项覆盖（插件运行时挂的类名） ═════════ */
+
+/* 分组标签 / 连线标签 / 文件名标签没法在内容里写标记（Obsidian 用
+   setText / textContent 渲染它们，塞 HTML 会原样显示）。所以这三处改用
+   「右键 → 挂类名」，状态记在插件的数据文件里。
+
+   权重刻意写到 (0,3,0)，稳压上面 (0,2,0) 的全局默认。 */
+
+.canvas-wrapper .canvas-group-label.cta-group-left    { text-align: left; }
+.canvas-wrapper .canvas-group-label.cta-group-center  { text-align: center; }
+.canvas-wrapper .canvas-group-label.cta-group-right   { text-align: right; }
+.canvas-wrapper .canvas-group-label.cta-group-justify { text-align: justify; }
+
+.canvas-wrapper .canvas-path-label.cta-path-left    { text-align: left; }
+.canvas-wrapper .canvas-path-label.cta-path-center  { text-align: center; }
+.canvas-wrapper .canvas-path-label.cta-path-right   { text-align: right; }
+.canvas-wrapper .canvas-path-label.cta-path-justify { text-align: justify; }
+
+.canvas-wrapper .canvas-node-label.cta-nlabel-left    { text-align: left; }
+.canvas-wrapper .canvas-node-label.cta-nlabel-center  { text-align: center; }
+.canvas-wrapper .canvas-node-label.cta-nlabel-right   { text-align: right; }
+.canvas-wrapper .canvas-node-label.cta-nlabel-justify { text-align: justify; }
+
+
+/* ═══════════════════════════════════════════ ⑨ 笔记正文对齐 ═════════ */
+
+/* 由插件的「笔记正文：左/中/右/两端对齐」命令写入笔记的 frontmatter：
+       cssclasses: [cta-note-center]
+   这类名会挂在笔记的视图容器上，所以只影响这篇笔记自己的阅读视图，
+   不会波及白板卡片里嵌入的内容。
+   ⚠️ 实时预览（Live Preview）下语法标记会跟着文字一起动，光标位置略显别扭；
+      阅读视图效果最干净。 */
+
+.cta-note-left    .markdown-preview-view.markdown-rendered,
+.cta-note-left    .markdown-source-view.mod-cm6 .cm-content,
+.cta-note-left    .markdown-source-view.mod-cm6 .cm-line { text-align: left; }
+
+.cta-note-center  .markdown-preview-view.markdown-rendered,
+.cta-note-center  .markdown-source-view.mod-cm6 .cm-content,
+.cta-note-center  .markdown-source-view.mod-cm6 .cm-line { text-align: center; }
+
+.cta-note-right   .markdown-preview-view.markdown-rendered,
+.cta-note-right   .markdown-source-view.mod-cm6 .cm-content,
+.cta-note-right   .markdown-source-view.mod-cm6 .cm-line { text-align: right; }
+
+.cta-note-justify .markdown-preview-view.markdown-rendered,
+.cta-note-justify .markdown-source-view.mod-cm6 .cm-content,
+.cta-note-justify .markdown-source-view.mod-cm6 .cm-line { text-align: justify; }

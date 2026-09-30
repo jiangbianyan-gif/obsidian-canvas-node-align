@@ -1,0 +1,8 @@
+# Keep line endings stable across platforms: the plugin, the tests and the
+# shell script are all written with LF, and tools/install.sh must keep LF to
+# stay runnable under bash.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary

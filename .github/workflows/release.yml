@@ -1,7 +1,5 @@
 name: Release
 
-# Two ways in:name: Release
-
 # Two ways in:
 #
 #   1. Actions tab -> Release -> "Run workflow"   (works entirely in the browser;
@@ -119,112 +117,6 @@ jobs:
           # an asset-less release has already happened here once. The build
           # step above already fails on a missing file; this is the second net.
           fail_on_unmatched_files: true
-          draft: false
-          prerelease: false
-          make_latest: true
-
-#
-#   1. Actions tab -> Release -> "Run workflow"   (works entirely in the browser;
-#      the workflow creates the tag for you)
-#   2. pushing a tag whose name equals manifest.json's version
-#
-# Both end up doing the same thing: verify, attest, and publish a release whose
-# assets are exactly the committed files.
-on:
-  push:
-    tags:
-      - "*"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to release (leave empty to read manifest.json)"
-        required: false
-        default: ""
-
-permissions:
-  contents: write       # create the release
-  id-token: write       # required for build provenance
-  attestations: write   # required for build provenance
-
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      # The directory installs before it runs the build script, so a
-      # package.json / package-lock.json mismatch there would silently
-      # downgrade build verification to "could not run" — the exact
-      # recommendation this workflow exists to avoid. Fail here instead.
-      # There are no dependencies, so this stays fast.
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
-
-      # Which version are we publishing? Tag push -> the tag; manual run -> the
-      # input, or manifest.json if it was left empty.
-      - name: Resolve version
-        id: v
-        run: |
-          set -e
-          if [ -n "${{ inputs.version }}" ]; then
-            VER="${{ inputs.version }}"
-          elif [ "${{ github.ref_type }}" = "tag" ]; then
-            VER="${{ github.ref_name }}"
-          else
-            VER="$(node -p "require('./manifest.json').version")"
-          fi
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "Releasing $VER"
-
-      - name: Syntax-check main.js
-        run: node --check main.js
-
-      # Validates metadata against the directory's submission rules, and checks
-      # that the version above matches manifest.json. Fails the run on mismatch.
-      - name: Verify manifest and version
-        run: node tools/check-manifest.mjs --tag "${{ steps.v.outputs.version }}"
-
-      - name: Run unit tests
-        run: npm test
-
-      # The community directory runs the first script it finds in the order
-      # build / build:plugin / compile, and compares the result with the
-      # committed source to verify the release was built from it. Running the
-      # same command here means a broken build script fails CI, instead of
-      # quietly downgrading that check to "could not run" after the release.
-      - name: Build
-        run: npm run build
-
-      # The community directory recommends releasing with build provenance, so
-      # users can verify these assets were built from this commit. Without it
-      # the directory reports "release assets are missing build attestation".
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: |
-            main.js
-            manifest.json
-            styles.css
-
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          # Obsidian downloads these three files from the release whose tag
-          # matches manifest.json's version. Do not build or rename them.
-          tag_name: ${{ steps.v.outputs.version }}
-          # The directory warns when the release name does not contain the
-          # version, so name it after the version.
-          name: ${{ steps.v.outputs.version }}
-          files: |
-            main.js
-            manifest.json
-            styles.css
           draft: false
           prerelease: false
           make_latest: true

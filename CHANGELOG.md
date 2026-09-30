@@ -3,56 +3,15 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 2.2.2 — 2026-09-30
+## 2.2.0 — 2026-09-30
 
-**Build verification, take two.** No changes to the plugin itself. The
-directory's build-verification scan reported *"running the build script
-failed"* for 2.2.1, with no output captured from `tools/build.mjs` at all —
-meaning the script died before its first log line, which made the real cause
-undiagnosable from the outside. `tools/build.mjs` is reworked so that cannot
-happen again:
+**Vertical alignment**, plus the build tooling the community directory needs in
+order to verify the release.
 
-- **It speaks first.** The first thing it prints is the environment: Node
-  version, platform, working directory, and the contents of the repository
-  root and `tools/`. A silent failure now carries its own evidence.
-- **A missing helper can no longer kill it.** `tools/check-manifest.mjs` is
-  loaded with a *dynamic* import wrapped in a try/catch. A static import is
-  resolved before the script's first line runs, so a helper that was missing or
-  unloadable would abort it with zero output.
-- **Only the payload can fail the build.** Whether the three files Obsidian
-  downloads exist, are non-empty, are BOM-free, and parse decides the exit
-  code. Metadata consistency (versions, tags, submission rules) is now reported
-  as a warning — compliance is still a hard gate, enforced by
-  `npm run check:manifest`, which CI runs as its own step.
-- A crash is caught and printed on stdout, so the next scan shows the cause
-  instead of a bare "exit code 1".
-- 6 more tests pin these rules down.
-
-## 2.2.1 — 2026-09-30
-
-**Release tooling.** No changes to the plugin itself. 2.2.0 was never
-published: its release was created by hand and pointed at a commit that
-predated the build tooling, so the directory's build-verification check
-could not run. 2.2.1 re-releases the same code with the tooling in place.
-
-- Added a `build` script (`tools/build.mjs`). The community directory runs
-  the first script it finds in the order `build` / `build:plugin` /
-  `compile` and verifies the result matches what is committed; this script
-  parses `main.js`, validates the metadata, confirms the three release
-  files are present and BOM-free, and prints their sizes and SHA-256
-  hashes. It never rewrites committed files (byte-identical on re-runs).
-- The release workflow now runs `npm ci` (lockfile consistency sentinel),
-  `npm test` (both test files) and `npm run build` before attesting and
-  publishing.
-- 15 new tests for the build tooling (`test/build.test.mjs`), including
-  guards that the build script stays dependency-free and never shells out.
-
-## 2.2.0 — 2026-09-29
-
-**Vertical alignment.** Until now the plugin only controlled where a line of
-text starts and ends (horizontal). The vertical position was whatever Obsidian
-did by default — always pinned to the top of the card. Both axes are now
-independent, so they combine freely: 4 horizontal × 3 vertical = 12 positions.
+Until now the plugin only controlled where a line of text starts and ends
+(horizontal); the vertical position was whatever Obsidian did by default — always
+pinned to the top of the card. Both axes are now independent, so they combine
+freely: 4 horizontal × 3 vertical = 12 positions.
 
 **Added**
 
@@ -75,23 +34,48 @@ independent, so they combine freely: 4 horizontal × 3 vertical = 12 positions.
   axis never wipes the other axis's marker, and CSS guards that fail the build
   if a vertical selector loses the specificity needed to beat Obsidian's own
   stylesheet.
-- `npm run build` (`tools/build.mjs`). The community directory runs the first
-  script it finds in the order `build` / `build:plugin` / `compile` and compares
-  the result against the committed source; the 2.1.0 review reported
-  *build verification could not run* because none of those existed. The plugin
-  has no bundler, so the command verifies the release payload instead of
-  generating it — it parses `main.js` in-process, validates the metadata, checks
-  that the three downloaded files are present and BOM-free, and prints their
-  sizes and sha256 hashes. It never rewrites a tracked file, so running it twice
-  leaves the hashes identical, which is the property being verified.
-  `npm run build -- --zip` additionally writes
+
+**Release tooling**
+
+The 2.1.0 review from the community directory recommended fixing *build
+verification*: the scanner runs the first script it finds in the order `build` /
+`build:plugin` / `compile`, and compares the result against the committed
+source. The plugin has no bundler, so the command below verifies the release
+payload instead of generating it, and never rewrites a tracked file — running it
+twice leaves every hash identical, which is the property being verified.
+
+- `npm run build` (`tools/build.mjs`). It parses `main.js` in-process — no child
+  process, because `spawnSync` on the running `node` binary fails with `EBUSY`
+  on Windows — validates the metadata, checks that the three files Obsidian
+  downloads exist, are non-empty and BOM-free, and prints their sizes and
+  SHA-256 hashes. `npm run build -- --zip` additionally writes
   `dist/canvas-node-align-<version>.zip`.
-- `tools/check-manifest.mjs` now also fails when `package.json` has no
-  `build` / `build:plugin` / `compile` script, and exposes a
-  `validateManifest()` export so the build can reuse it without spawning a
-  second Node process.
-- The release workflow runs `npm run build` before attesting, so a broken build
-  script fails CI instead of silently downgrading the directory's check.
+- **It speaks first.** The first thing the script prints is the environment:
+  Node version, platform, working directory, and the contents of the repository
+  root and `tools/`. An earlier revision could fail before its first log line,
+  which left the directory's scan reporting only *"running the build script
+  failed"* with no captured output. A silent failure now carries its own
+  evidence.
+- **A missing helper can no longer kill it.** `tools/check-manifest.mjs` is
+  loaded with a *dynamic* import wrapped in a try/catch. A static import is
+  resolved before the script's first line runs, so a helper that was missing or
+  unloadable used to abort it with zero output.
+- **Only the payload can fail the build.** Whether the three downloaded files
+  are present, non-empty, BOM-free and parseable decides the exit code. Metadata
+  consistency (versions, tags, submission rules) is reported as a warning —
+  compliance is still a hard gate, enforced by `npm run check:manifest`, which
+  CI runs as its own step.
+- `tools/check-manifest.mjs` now also fails when `package.json` has no `build` /
+  `build:plugin` / `compile` script, and exposes a `validateManifest()` export so
+  the build can reuse it without spawning a second Node process.
+- The release workflow runs `npm ci` (a lockfile-consistency sentinel: a
+  `package.json` / `package-lock.json` drift fails CI instead of quietly
+  downgrading the directory's check back to *"could not run"*), then `npm test`
+  (both test files) and `npm run build` before attesting and publishing.
+- 20 tests for the tooling (`test/build.test.mjs`), including guards that the
+  build script stays dependency-free and never shells out, that it reports its
+  environment before any check runs, and that a missing helper or an unloadable
+  module can no longer fail the build.
 
 **Changed**
 
@@ -111,6 +95,9 @@ independent, so they combine freely: 4 horizontal × 3 vertical = 12 positions.
   to the same top-anchored, scrollable layout. Nothing is clipped or lost —
   this is why the implementation changes `flex-grow` on Obsidian's spacer
   pseudo-elements rather than using `justify-content: center`.
+- The first 2.2.0 tag was created by hand and pointed at a commit that predated
+  the tooling above, so the release is re-cut from a commit that includes it.
+  Nothing in the plugin itself changed in between.
 
 ## 2.1.0 — 2026-09-29
 

@@ -1,0 +1,12 @@
+# build output / deps
+node_modules/
+main.js.map
+*.zip
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# test scratch
+_tmp/

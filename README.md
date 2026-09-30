@@ -169,9 +169,20 @@ Command palette →
 - **整块白板：所有卡片垂直居中** (plus top / bottom), **整块白板：所有卡片清除垂直对齐**
 
 ### Note bodies
-Command palette → **笔记正文：居中** / 右对齐 / 两端对齐 / 清除对齐.
 
-This writes `cssclasses: [cta-note-center]` into the note's frontmatter. Existing `cssclasses` entries are preserved. Delete the class (or run 清除对齐) to revert. Live Preview works but the syntax marks move along with the text — Reading view looks cleaner.
+**Not in this plugin.** Aligning a note that is open on its own moved to the companion plugin
+**[Note Text Align](https://github.com/jiangbianyan-gif/obsidian-note-text-align)** (right-click
+inside a note → **笔记对齐**, or the command palette → **笔记正文：…**).
+
+What this plugin still owns is the other case:
+
+- the body of a note **while it is embedded in a card** (`![[note]]`) → the
+  *卡片内嵌笔记的正文* setting, which also keeps **justify** because an embedded note is real
+  Markdown whose paragraphs wrap.
+
+> Each plugin owns its own surface. Up to 2.3.0 this plugin could also align standalone notes;
+> from 2.3.1 that belongs to the plugin above. It still recognises the old `cta-note-*` class
+> names, so alignment you set earlier keeps working.
 
 ### Settings
 Settings → Canvas Node Align:

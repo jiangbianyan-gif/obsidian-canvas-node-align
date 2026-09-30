@@ -1,8 +1,8 @@
 'use strict';
 
 /* ============================================================================
-   Canvas Node Align —— 白板与笔记的文字对齐
-   Canvas Node Align — text alignment for Canvas cards and Markdown notes
+   Canvas Node Align —— 白板里的文字对齐
+   Canvas Node Align — text alignment inside Obsidian Canvas
    ----------------------------------------------------------------------------
    设计原则：插件只负责「写字 / 挂类名」，渲染一律交给 CSS。
 
@@ -16,7 +16,7 @@
      最后一行，而白板卡片里的文字往往是两三行短句，看上去和左对齐一模一样
      （以前还给设置里配了个「最后一行也拉满」的开关去凑这个效果）。三种标签
      更是单行文字，永远没有可拉伸的行。所以白板侧一律去掉，只保留
-     左 / 中 / 右。「笔记正文」（真 Markdown 文件，段落会正常折行）仍然保留
+     左 / 中 / 右。「卡片内嵌笔记的正文」（真 Markdown，段落会正常折行）仍然保留
      两端对齐 —— 在那里它是真能看出差别的。相关入口见 ALIGNS 的注释。
 
    ★ 垂直是怎么实现的？（改之前务必看懂，CSS 那段有详细推导）
@@ -40,7 +40,10 @@
      ⑦ 嵌入笔记 / 网页的卡片正文 → 垂直方向逐张（运行时挂类名）
         ★ 这类卡片的内容是**别人的文件**，不能往里面写标记，所以改挂类名，
           状态记在插件自己的 data.json 里。
-     另外还给 Markdown 笔记正文提供水平对齐（原生没有此功能）。
+     ★ 独立 Markdown 笔记正文的对齐**不在本插件里** —— 那是另一个插件
+       「Note Text Align」的事（机制完全不同：它写笔记 frontmatter 的 cssclasses，
+       不碰正文）。本插件只管白板：卡片正文 / 三种标签 / 嵌在卡片里的内容。
+       ★ 所以本插件注册的全是 canvas:* 事件，一个编辑器菜单都不挂。
 
    ★ 右键菜单长什么样？
      右键卡片 →「文本对齐 ▸」→ 鼠标停一下弹出**九宫格子菜单**：
@@ -97,7 +100,6 @@
                                            // 构造子菜单时就建好了，不用等 show
                                            // 拿不到就回退成文字子菜单（见 addAlignGrid）
      menu.hide()                           // 自绘面板不会自动关，点完自己关
-     app.fileManager.processFrontMatter(file, fm => ...)
    ============================================================================ */
 
 const { Plugin, PluginSettingTab, Setting, Notice, Menu } = require('obsidian');
@@ -122,8 +124,10 @@ const ALIGNS = [
 ];
 const ALIGN_KEYS = ALIGNS.map(function (a) { return a.key; });
 
-// 「两端对齐」只留给**笔记正文**：真 Markdown 文件，段落正常折行，它是有意义的。
-// 用到 NOTE_ALIGNS 的地方只有两处：笔记正文命令、设置里「卡片内嵌笔记的正文」。
+/* 「两端对齐」在白板里只剩一处用得到：设置里的「卡片内嵌笔记的正文」。
+   内嵌进来的是**真 Markdown**（段落会正常折行），两端对齐在那儿是真有效果的；
+   卡片正文和三种标签都是短句 / 单行文字，所以没有它。
+   ★ 独立笔记（没嵌进卡片的那种）的对齐归 Note Text Align 插件管，不在本插件。 */
 const JUSTIFY_ALIGN = { key: 'justify', letter: 'j', label: '两端对齐', icon: 'align-justify' };
 const NOTE_ALIGNS = ALIGNS.concat([JUSTIFY_ALIGN]);
 
@@ -152,11 +156,10 @@ const TARGETS = [
 ];
 
 // 出厂默认值。（note 的 inherit = 跟随所在卡片，见文件末尾说明）
-// cardV = 没写垂直标记的卡片统一用哪个垂直位置；justifyLast = 见设置面板说明。
+// cardV = 没写垂直标记的卡片统一用哪个垂直位置。
 const DEFAULT_SETTINGS = {
   defaults: { card: 'left', note: 'inherit', label: 'left', group: 'center', path: 'center' },
   cardV: 'top',
-  justifyLast: false,
   perItem: {}   // { "<canvas路径>": { "g:<nodeId>":"center", "e:<edgeId>":"right",
                 //                    "n:<nodeId>":"left",   "v:<nodeId>":"middle" } }
 };
@@ -167,12 +170,6 @@ const VCARD_CLS  = 'cta-v-';       // 垂直，同样挂在 .canvas-node 上
 const GROUP_CLS  = 'cta-group-';
 const PATH_CLS   = 'cta-path-';
 const NLABEL_CLS = 'cta-nlabel-';
-
-// 「两端对齐时最后一行也拉满」打开时，挂在 body 上的类名
-const JUSTIFY_LAST_CLS = 'cta-justify-last';
-
-// 笔记正文对齐用的 frontmatter 类名前缀
-const NOTE_CLS = 'cta-note-';
 
 
 /* ══════════════════════════════════════════════════════════ 纯函数（可单测） */
@@ -208,8 +205,8 @@ const VLETTER2KEY = { t: 'top', m: 'middle', b: 'bottom' };
    #cta-j 标记 —— 那种卡片**实际渲染出来就是左对齐**。不收口的话，
    九宫格会一格都不高亮、状态文字还会显示出一个面板里根本没有的「两端对齐」。
 
-   （笔记正文的 justif 不受影响：它走 setNoteAlign / frontmatter 那条路，
-     不经过这里。所以这里收口是安全的。） */
+   （笔记的 justif 不经过这里 —— 那是 Note Text Align 插件写 frontmatter 的事，
+     所以这里收口是安全的。） */
 function canvasAlignKey(h) {
   if (h == null) return null;
   return ALIGN_KEYS.indexOf(h) >= 0 ? h : 'left';
@@ -301,24 +298,7 @@ function readAlignClass(el, prefixes) {
   return null;
 }
 
-/* ---------- C. 笔记 frontmatter 的 cssclasses 处理 ---------- */
-
-// cssclasses 可能是字符串、数组或不存在，统一成数组。
-function toArray(v) {
-  if (v == null) return [];
-  return Array.isArray(v) ? v.slice() : [v];
-}
-
-// 计算「设置成 mode 后」的 cssclasses 数组；mode 为 null 表示只清除。
-// 保留用户自己写的其它类名，只增删 cta-note-* 前缀的那些。
-function mergeNoteClass(current, mode) {
-  const kept = toArray(current).filter(function (c) {
-    return String(c).indexOf(NOTE_CLS) !== 0;
-  });
-  if (mode) kept.push(NOTE_CLS + mode);
-  return kept;
-}
-
+/* ---------- C. 小工具 ---------- */
 
 /* ---------- D. 右键九宫格 ---------- */
 
@@ -462,7 +442,8 @@ class CanvasNodeAlignSettingTab extends PluginSettingTab {
         .addDropdown(function (dd) {
           // 「卡片内嵌笔记的正文」多一个「跟随卡片」选项
           if (t.key === 'note') dd.addOption('inherit', '跟随卡片');
-          // ★ 笔记正文保留两端对齐（真 Markdown，段落会折行），白板侧只有三个
+          // ★ 内嵌进来的笔记是真 Markdown（段落会折行），所以那一项保留两端对齐；
+          //   卡片正文和三种标签都是短句 / 单行，只有左中右。详见 ALIGNS 注释。
           (t.key === 'note' ? NOTE_ALIGNS : ALIGNS).forEach(function (a) {
             dd.addOption(a.key, a.label);
           });
@@ -493,25 +474,6 @@ class CanvasNodeAlignSettingTab extends PluginSettingTab {
           p.settings.cardV = v;
           // 没写垂直标记的卡片靠类名落地，改完必须整块重挂一遍
           p.reapplyAll();
-          await p.saveSettings();
-        });
-      });
-
-    // 白板侧已经没有两端对齐了（见 ALIGNS 注释），这个开关只剩「笔记正文」用得上
-    containerEl.createEl('h3', { text: '两端对齐（只作用于笔记正文）' });
-
-    new Setting(containerEl)
-      .setName('最后一行也拉满')
-      .setDesc('按排版规范，两端对齐**不拉伸最后一行**。开启后连最后一行一起拉满' +
-               '（text-align-last: justify），短句也会被撑开；' +
-               '英文长段落默认效果已经很明显，一般不用开。' +
-               '★ 只影响「笔记正文」—— 白板里的卡片和标签已经没有两端对齐了，' +
-               '那儿的文字常只有一两行，设了也看不出差别。')
-      .addToggle(function (tg) {
-        tg.setValue(!!p.settings.justifyLast);
-        tg.onChange(async function (v) {
-          p.settings.justifyLast = v;
-          p.applyBodyClasses();
           await p.saveSettings();
         });
       });
@@ -565,7 +527,6 @@ module.exports = class CanvasNodeAlign extends Plugin {
     this.saveSettings();
 
     this.applyDefaults();
-    this.applyBodyClasses();
     this.registerCanvasMenus();
     this.registerCommands();
 
@@ -585,7 +546,6 @@ module.exports = class CanvasNodeAlign extends Plugin {
     TARGETS.forEach(function (t) {
       document.body.style.removeProperty(t.cssVar);
     });
-    document.body.classList.remove(JUSTIFY_LAST_CLS);
   }
 
 
@@ -601,8 +561,8 @@ module.exports = class CanvasNodeAlign extends Plugin {
     //   可能还存着 justif ——
     //     设置里的默认值不收口 ⇒ 下拉框里没有这个选项，会显示成空白；
     //     逐条记录不收口   ⇒ 自检报告里会冒出一个 UI 上根本没有的「两端对齐」。
-    //   （键名以 v: 开头的是整张卡片的**垂直**位置，值域 top/middle/bottom，别碰；
-    //     笔记正文的 justif 也不在这里，它存在笔记的 frontmatter 里。）
+    //   （键名以 v: 开头的是整张卡片的**垂直**位置，值域 top/middle/bottom，别碰。
+    //     独立笔记的 justif 不在这里 —— 它存在笔记 frontmatter 里，归 Note Text Align 管。）
     const self = this;
     ['card', 'label', 'group', 'path'].forEach(function (k) {
       const v = self.settings.defaults[k];
@@ -635,13 +595,6 @@ module.exports = class CanvasNodeAlign extends Plugin {
       if (v) document.body.style.setProperty(t.cssVar, v);
     });
   }
-
-  // 挂在 body 上的开关类名。目前只有一个：两端对齐是否拉满最后一行。
-  // 用 body 类名而不是逐个卡片挂，是因为这是「全局排版口味」，不是逐张设置。
-  applyBodyClasses() {
-    document.body.classList.toggle(JUSTIFY_LAST_CLS, !!this.settings.justifyLast);
-  }
-
 
   /* ─────────────────────────────────────────────── 右键菜单 */
 
@@ -1004,33 +957,6 @@ module.exports = class CanvasNodeAlign extends Plugin {
       }
     });
 
-    // 笔记正文对齐（只有水平 —— 整篇笔记的垂直居中意义不大，而且长文会很怪）
-    // ★ 用 NOTE_ALIGNS：这里比白板侧多一个「两端对齐」，因为真 Markdown 文件的
-    //   段落会正常折行，两端对齐是看得出效果的。
-    NOTE_ALIGNS.forEach((a) => {
-      this.addCommand({
-        id: 'note-' + a.key,
-        name: '笔记正文：' + a.label,
-        checkCallback: (checking) => {
-          const file = this.activeMarkdownFile();
-          if (!file) return false;
-          if (!checking) this.setNoteAlign(file, a.key);
-          return true;
-        }
-      });
-    });
-
-    this.addCommand({
-      id: 'note-clear',
-      name: '笔记正文：清除对齐（恢复默认）',
-      checkCallback: (checking) => {
-        const file = this.activeMarkdownFile();
-        if (!file) return false;
-        if (!checking) this.setNoteAlign(file, null);
-        return true;
-      }
-    });
-
     this.addCommand({
       id: 'align-report',
       name: '查看选中卡片的对齐状态',
@@ -1086,8 +1012,8 @@ module.exports = class CanvasNodeAlign extends Plugin {
       '其中已挂水平类名：' + (cardCls < 0 ? '不在白板视图' : cardCls + ' 张'),
       '其中已挂垂直类名：' + (vCls < 0 ? '不在白板视图' : vCls + ' 张'),
       '卡片默认垂直位置：' + (this.settings.cardV || DEFAULT_SETTINGS.cardV),
-      '水平对齐可选值：' + ALIGN_KEYS.join(' / ') + '（白板侧；笔记正文另有 justify）',
-      '两端对齐拉满末行（笔记）：' + (this.settings.justifyLast ? '已开启' : '关闭'),
+      '水平对齐可选值：' + ALIGN_KEYS.join(' / ') +
+        '（另有 justify，只用于「卡片内嵌笔记的正文」这个设置项）',
       '各位置默认水平对齐：' + TARGETS.map(function (t) {
         return t.label + ' ' + (this.settings.defaults[t.key] || '-');
       }, this).join(' · '),
@@ -1117,14 +1043,6 @@ module.exports = class CanvasNodeAlign extends Plugin {
     const view = leaf && leaf.view;
     if (!view || typeof view.getViewType !== 'function') return null;
     return view.getViewType() === 'canvas' ? view : null;
-  }
-
-  activeMarkdownFile() {
-    const leaf = this.activeLeafSafe();
-    const view = leaf && leaf.view;
-    if (!view || typeof view.getViewType !== 'function') return null;
-    if (view.getViewType() !== 'markdown') return null;
-    return view.file || null;
   }
 
   textNodesOf(canvas) {
@@ -1379,22 +1297,6 @@ module.exports = class CanvasNodeAlign extends Plugin {
   }
 
 
-  /* ─────────────────────────────────────────────── 笔记正文对齐 */
-
-  async setNoteAlign(file, mode) {
-    let applied = null;
-    await this.app.fileManager.processFrontMatter(file, (fm) => {
-      const next = mergeNoteClass(fm.cssclasses, mode);
-      if (next.length) fm.cssclasses = next;
-      else delete fm.cssclasses;
-      applied = mode;
-    });
-    const name = mode ? (ALIGN_BY_KEY[mode] || {}).label || mode : '默认（左）';
-    new Notice('笔记正文对齐已设为：' + name);
-    void applied;
-  }
-
-
   /* ─────────────────────────────────────────────── 重新挂类名的时机 */
 
   registerReapplyTriggers() {
@@ -1619,8 +1521,8 @@ function saveCanvas(canvas) {
    （Obsidian 环境里 module.exports 是插件类，这里只在 Node 下补充挂载） */
 module.exports.__pure = {
   readAlign, readVAlign, stripMarks, withAlign, withVAlign,
-  clearAlignClasses, readAlignClass, toArray, mergeNoteClass, canvasAlignKey,
-  // 白板侧只有左/中/右；两端对齐只留给笔记正文（见 ALIGNS 注释）
+  clearAlignClasses, readAlignClass, canvasAlignKey,
+  // 白板侧只有左/中/右；justify 只用于「卡片内嵌笔记的正文」那一项（见 ALIGNS 注释）
   ALIGN_KEYS, NOTE_ALIGNS, JUSTIFY_ALIGN,
   // 九宫格（2.3.0）：模型 + 小图示几何 + 状态文字，都是纯函数
   glyphBars, gridCellFor, stateText, ALIGN_GRID_ROWS,

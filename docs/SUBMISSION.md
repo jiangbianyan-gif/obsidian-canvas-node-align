@@ -94,7 +94,7 @@ Checked by the release workflow, but worth knowing:
 - `fundingUrl`: remove it entirely if you do not accept donations.
 - `minAppVersion`: the minimum version the plugin actually works on. It is currently `1.5.0`; the plugin is developed and tested against 1.13.7.
 - `isDesktopOnly`: `false` — only public Obsidian APIs plus a few feature-detected Canvas internals are used, no Node or Electron APIs.
-- Command IDs must not repeat the plugin ID; Obsidian prefixes them automatically. The IDs here are `align-*`, `canvas-all-*`, `note-*`.
+- Command IDs must not repeat the plugin ID; Obsidian prefixes them automatically. The IDs here are `align-*`, `valign-*`, `canvas-all-*`, `canvas-all-valign-*` and `align-report`.
 
 ## What the automated review actually reports
 

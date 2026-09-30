@@ -3,6 +3,40 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.3.1 — 2026-09-30
+
+**Split in two: note alignment moved to its own plugin.**
+
+Aligning a note body is a different mechanism (it writes the note's frontmatter)
+on a different surface (a Markdown file, not a Canvas card), and mixing the two
+made both harder to explain. It now lives in
+**[Note Text Align](https://github.com/jiangbianyan-gif/obsidian-note-text-align)**.
+This plugin is Canvas only.
+
+**Removed**
+
+- The five `笔记正文：…` palette commands.
+- The note CSS block (`cta-note-*`), and the *stretch the last line when
+  justifying* setting with the `body` class it toggled. Both moved across.
+- Nothing produces or styles `cta-note-*` here any more. Notes you aligned with
+  2.3.0 or earlier keep that class in their frontmatter, and the companion plugin
+  still recognises it — so no note loses its alignment. Set a position once in
+  such a note and the class is rewritten to the new prefix.
+
+**Kept**
+
+- The **卡片内嵌笔记的正文** setting: a note *embedded in a card* is a card
+  concern, and an embedded note is real Markdown whose paragraphs wrap, so that
+  one still offers justify.
+- Everything Canvas: the nine-grid panel, card / group / edge / file-name label
+  alignment, vertical position, the per-item defaults and the whole toolchain.
+
+**Notes**
+
+- If you never used note alignment, this update changes nothing for you.
+- The two plugins own separate surfaces: this one handles a note **while it is
+  embedded in a card**, the other handles a note **opened on its own**.
+
 ## 2.3.0 — 2026-09-30
 
 **A right-click nine-grid for card bodies**, and one option removed from the

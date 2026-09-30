@@ -28,10 +28,11 @@ const consts = slice('const ALIGNS = [', 'class CanvasNodeAlignSettingTab');
 const code =
   consts +
   '\nreturn {readAlign, readVAlign, stripMarks, withAlign, withVAlign, clearAlignClasses, ' +
-  'readAlignClass, toArray, mergeNoteClass, canvasAlignKey, ' +
+  'readAlignClass, canvasAlignKey, ' +
   'ALIGN_BY_KEY, VALIGN_BY_KEY, ALIGN_KEYS, NOTE_ALIGNS, JUSTIFY_ALIGN, ' +
-  'CARD_CLS, VCARD_CLS, GROUP_CLS, PATH_CLS, NLABEL_CLS, JUSTIFY_LAST_CLS, ' +
-  'ALIGN_GRID_ROWS, glyphBars, gridCellFor, stateText, GLYPH_W, GLYPH_H, GLYPH_BAR};';
+  'CARD_CLS, VCARD_CLS, GROUP_CLS, PATH_CLS, NLABEL_CLS, ' +
+  'ALIGN_GRID_ROWS, glyphBars, gridCellFor, stateText, GLYPH_W, GLYPH_H, GLYPH_BAR, ' +
+  'GRID_ITEM_TITLE};';
 const A = new Function(code)();
 
 let pass = 0;
@@ -60,16 +61,18 @@ eq(A.readAlign('文字 #cta-l'), 'left', 'read tag marker mid-line');
 eq(A.readAlign('#cta-cc'), null, 'does not match the lookalike #cta-cc');
 eq(A.readAlign('#cta-'), null, 'does not match a truncated tag');
 
-/* ---------- 白板侧没有「两端对齐」（2.3.1 去掉的） ----------
+/* ---------- 白板侧只有左/中/右（2.3.1） ----------
  * text-align: justify 只在会折行的多行段落里才有效果（按规范不拉伸最后一行），
  * 卡片里常是两三行短句、三种标签更是单行文字 ⇒ 用户实测「在卡片里面用不了」。
- * 所以白板侧一律只有左/中/右；两端对齐只留给笔记正文（真 Markdown）。
- * 这几条是**防止它被顺手加回来**的。 */
+ * 所以白板侧一律只有左/中/右。这几条是**防止它被顺手加回来**的。 */
 eq(A.ALIGN_KEYS.join(','), 'left,center,right', '白板侧的水平取值就是左/中/右三个');
 eq(A.ALIGN_KEYS.indexOf('justify'), -1, '白板侧没有两端对齐');
+
+/* 唯一的例外：设置里的「卡片内嵌笔记的正文」。嵌进来的是**真 Markdown**
+   （段落会折行），两端对齐在那儿是真有效果的 —— 所以这一项的取值表仍是四个。 */
 eq(A.NOTE_ALIGNS.map(function (a) { return a.key; }).join(','),
-   'left,center,right,justify', '笔记正文比白板侧多一个两端对齐');
-eq(A.JUSTIFY_ALIGN.label, '两端对齐', '两端对齐那一项本身还在（给笔记用）');
+   'left,center,right,justify', '「卡片内嵌笔记的正文」多一个两端对齐');
+eq(A.JUSTIFY_ALIGN.label, '两端对齐', '两端对齐那一项还在（给内嵌笔记那一项用）');
 eq(A.JUSTIFY_ALIGN.letter, 'j', '两端对齐的标记字母没变（老文件还得读得出来）');
 eq(A.ALIGN_BY_KEY['justify'] != null, true,
    'ALIGN_BY_KEY 里查得到两端对齐 —— 不然老数据查标签会得到空字符串');
@@ -152,24 +155,25 @@ A.clearAlignClasses(null, [A.GROUP_CLS]);
 A.clearAlignClasses({}, [A.GROUP_CLS]);
 eq(true, true, 'does not throw on a null element or one without classList');
 
-/* ---------- toArray ---------- */
-eq(A.toArray(null), [], 'null -> []');
-eq(A.toArray(undefined), [], 'undefined -> []');
-eq(A.toArray('x'), ['x'], 'string -> single-element array');
-eq(A.toArray(['a', 'b']), ['a', 'b'], 'array passes through');
-const orig = ['a'];
-const copy = A.toArray(orig);
-copy.push('b');
-eq(orig, ['a'], 'returns a copy and does not mutate the input');
-
-/* ---------- mergeNoteClass ---------- */
-eq(A.mergeNoteClass(null, 'center'), ['cta-note-center'], 'creates cssclasses when missing');
-eq(A.mergeNoteClass(['my-class'], 'center'), ['my-class', 'cta-note-center'], 'keeps the user\'s own classes');
-eq(A.mergeNoteClass(['cta-note-left', 'my-class'], 'right'), ['my-class', 'cta-note-right'], 'switching alignment replaces the old class');
-eq(A.mergeNoteClass('cta-note-left', 'center'), ['cta-note-center'], 'accepts the string form');
-eq(A.mergeNoteClass(['my-class'], null), ['my-class'], 'clearing keeps the user\'s classes');
-eq(A.mergeNoteClass(['cta-note-center'], null), [], 'clearing leaves an empty array when nothing else is there');
-eq(A.mergeNoteClass(['cta-note-left', 'cta-note-right'], 'center'), ['cta-note-center'], 'clears several stale classes at once');
+/* ---------- 「独立笔记」那一套已经搬去 Note Text Align（2.3.1） ----------
+ * 这一整块是**反向守卫**：白板插件里不该再有任何编辑器菜单 / frontmatter 写入口，
+ * 也不该再产出 cta-note-* 类名 —— 那些现在归另一个插件。
+ * 这种"拆干净了没"的错误，编译器和真机都不会报，只能在这里钉住。 */
+const canvasSrc = fs.readFileSync(SRC, 'utf8');
+eq(canvasSrc.indexOf("on('editor-menu'") >= 0, false,
+   '不再挂 editor-menu —— 独立笔记的右键菜单归 Note Text Align');
+eq(canvasSrc.indexOf('processFrontMatter') >= 0, false,
+   '不再写笔记 frontmatter');
+eq(canvasSrc.indexOf("cta-note-") >= 0, false,
+   '不再产出 cta-note-* 类名（那是 Note Text Align 接手的旧前缀，由它自己兼容）');
+eq(canvasSrc.indexOf('activeMarkdownFile') >= 0, false, '不再需要"当前 Markdown 笔记"');
+eq(canvasSrc.indexOf('justifyLast') >= 0, false,
+   '「最后一行也拉满」的开关已搬去 Note Text Align（它只作用于笔记）');
+eq(canvasSrc.indexOf('NOTE_MENU_TITLE') >= 0, false, '不再有「笔记对齐」那个菜单项');
+// 而白板该有的接线必须还在（顺手证明上面的断言不是因为文件读错了）
+eq(canvasSrc.indexOf("on('canvas:node-menu'") >= 0, true, '白板那三个菜单还挂着');
+eq(canvasSrc.indexOf("on('canvas:edge-menu'") >= 0, true, '连线菜单还在');
+eq(canvasSrc.indexOf("on('canvas:selection-menu'") >= 0, true, '多选菜单还在');
 
 /* ---------- readAlignClass (card class names, added in 2.1.0) ---------- */
 eq(A.readAlignClass(mockEl(['canvas-node', 'cta-card-center', 'x']), [A.CARD_CLS]), 'center', 'reads the card class');
@@ -386,9 +390,9 @@ eq(/\.cta-card-justify/.test(cssNoComment), false,
    '白板卡片正文没有两端对齐规则了');
 eq(/\.cta-group-justify|\.cta-path-justify|\.cta-nlabel-justify/.test(cssNoComment), false,
    '三种标签也没有两端对齐规则了');
-// 但笔记正文那条要留着（真 Markdown，段落会折行，两端对齐是有效的）
-eq(/\.cta-note-justify\s+\.markdown-preview-view/.test(cssNoComment), true,
-   '笔记正文的两端对齐规则保留');
+// 笔记那套规则也整体搬走了 —— 连 cta-note-* 一起，本插件一个字节都不该再产出
+eq(/\.cta-note-/.test(cssNoComment), false,
+   '独立笔记的对齐规则已搬到 Note Text Align，styles.css 里不再有 cta-note-*');
 
 /* ---------- 垂直对齐的样式守卫（2.2.0 新增） ----------
  * 垂直对齐靠覆盖 Obsidian 自带的 flex 占位块实现。Obsidian 那几条选择器是
@@ -425,12 +429,10 @@ vRules.forEach(function (rule) {
 });
 eq(minCls, 6, 'every vertical selector carries 6 classes, beating Obsidian\'s 4');
 
-eq(flat.indexOf('body.cta-justify-last') >= 0, true, 'has the justify-last opt-in rule');
-eq(A.JUSTIFY_LAST_CLS, 'cta-justify-last', 'the class name matches the stylesheet');
-eq(flat.indexOf('body.cta-justify-last .cta-note-justify') >= 0, true,
-   '「最后一行也拉满」只打在笔记正文上');
-eq(flat.indexOf('body.cta-justify-last .canvas-node.cta-card-justify'), -1,
-   '那条开关不再管白板卡片（卡片已经没有两端对齐了）');
+// 「最后一行也拉满」整个开关都搬去 Note Text Align 了（它只作用于笔记），
+// 所以本插件既不该有那个 body 类名，也不该有配套规则。
+eq(flat.indexOf('cta-justify-last') === -1, true,
+   '本插件不再有 justify-last 这个 body 开关（搬去 Note Text Align）');
 eq(flat.indexOf('.canvas-node.cta-card-right .canvas-node-content .markdown-source-view.mod-cm6') >= 0, true,
    'edit mode (CM6) also follows the horizontal alignment');
 

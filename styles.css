@@ -12,16 +12,16 @@
    ----------------------------------------------------------------------------
    对齐有两个方向，互相独立，可任意组合（白板侧 3 × 3 = 9 种）：
      水平 text-align  →  left | center | right ← 白板只有这三个
-                         笔记正文另有 justify（真 Markdown，段落会折行）
+                         （justify 只在「卡片内嵌笔记的正文」那一项里可选）
      垂直 由弹性占位块  →  top  | middle | bottom
    ----------------------------------------------------------------------------
-   本文件分 11 段：
+   本文件分 10 段（★ 独立 Markdown 笔记的对齐**不在本插件** —— 那是
+   「Note Text Align」那个插件的 styles.css，本文件里没有 cta-note-* 任何规则）：
      ① 全局默认变量            ② 卡片正文水平（逐张，运行时类名）
      ③ 卡片正文垂直（逐张）      ④ 隐藏标记本身
      ⑤ 跟着 / 不跟随           ⑥ 编辑态（CM6）也跟随
      ⑦ 卡片文件名标签          ⑧ 分组标签
      ⑨ 卡片内嵌笔记正文        ⑩ 逐项覆盖（分组 / 连线 / 文件名 / 卡片垂直）
-     ⑪ 笔记正文对齐
    ============================================================================ */
 
 
@@ -188,17 +188,9 @@
   :is(.cm-content, .cm-line) { text-align: center; }
 .canvas-node.cta-card-right   .canvas-node-content .markdown-source-view.mod-cm6
   :is(.cm-content, .cm-line) { text-align: right; }
-/* ★ 没有 .cta-card-justify 的对应条目 —— 同上一段，白板侧已去掉两端对齐。 */
-
-/* ── 两端对齐的最后一行（设置里的开关，★ 只作用于笔记正文） ─────────
-   按排版规范，两端对齐**不拉伸最后一行**。打开设置里的「最后一行也拉满」，
-   插件会给 <body> 挂上 cta-justify-last 类名，下面这条就生效。
-
-   白板侧没有对应的规则了：卡片和标签已经没有两端对齐（理由见 main.js 的
-   ALIGNS 注释），那里的文字常只有一两行，拉满末行也看不出差别。 */
-body.cta-justify-last .cta-note-justify .markdown-preview-view.markdown-rendered :is(p, li) {
-  text-align-last: justify;
-}
+/* ★ 没有 .cta-card-justify 的对应条目 —— 同上一段，白板侧已去掉两端对齐。
+   ★ 也没有「最后一行也拉满」那条规则：那个开关只作用于笔记，已经跟着笔记那套
+     一起搬去 Note Text Align 了（连 body 类名一起）。 */
 
 
 /* ═══════════════════════════════════════════ ⑦ 卡片文件名标签 ═════════ */
@@ -279,31 +271,6 @@ body.cta-justify-last .cta-note-justify .markdown-preview-view.markdown-rendered
 
 /* 卡片垂直对齐只用到 cta-v-* 类名，规则全在 ③ 段，这里不需要重复。 */
 
-
-/* ═══════════════════════════════════════════ ⑪ 笔记正文对齐 ═════════ */
-
-/* 由插件的「笔记正文：左/中/右/两端对齐」命令写入笔记的 frontmatter：
-       cssclasses: [cta-note-center]
-   这类名会挂在笔记的视图容器上，所以只影响这篇笔记自己的阅读视图，
-   不会波及白板卡片里嵌入的内容。
-   ⚠️ 实时预览（Live Preview）下语法标记会跟着文字一起动，光标位置略显别扭；
-      阅读视图效果最干净。 */
-
-.cta-note-left    .markdown-preview-view.markdown-rendered,
-.cta-note-left    .markdown-source-view.mod-cm6 .cm-content,
-.cta-note-left    .markdown-source-view.mod-cm6 .cm-line { text-align: left; }
-
-.cta-note-center  .markdown-preview-view.markdown-rendered,
-.cta-note-center  .markdown-source-view.mod-cm6 .cm-content,
-.cta-note-center  .markdown-source-view.mod-cm6 .cm-line { text-align: center; }
-
-.cta-note-right   .markdown-preview-view.markdown-rendered,
-.cta-note-right   .markdown-source-view.mod-cm6 .cm-content,
-.cta-note-right   .markdown-source-view.mod-cm6 .cm-line { text-align: right; }
-
-.cta-note-justify .markdown-preview-view.markdown-rendered,
-.cta-note-justify .markdown-source-view.mod-cm6 .cm-content,
-.cta-note-justify .markdown-source-view.mod-cm6 .cm-line { text-align: justify; }
 
 /* ═══════════════════════════════════════════ ⑫ 右键九宫格面板 ═════════ */
 

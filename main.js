@@ -6,10 +6,18 @@
    ----------------------------------------------------------------------------
    设计原则：插件只负责「写字 / 挂类名」，渲染一律交给 CSS。
 
-   ★ 对齐有两个方向，互相独立，可任意组合（4 × 3 = 12 种）：
-       水平  →  text-align，left | center | right | justify
+   ★ 对齐有两个方向，互相独立，可任意组合（3 × 3 = 9 种）：
+       水平  →  text-align，left | center | right
        垂直  →  由弹性占位块决定，top | middle | bottom
      两个方向各记各的标记、各挂各的类名，互不干扰。
+
+   ★ 为什么白板侧没有「两端对齐」？
+     text-align: justify 只在**有换行的多行段落**里才有效果 —— 它按规范不拉伸
+     最后一行，而白板卡片里的文字往往是两三行短句，看上去和左对齐一模一样
+     （以前还给设置里配了个「最后一行也拉满」的开关去凑这个效果）。三种标签
+     更是单行文字，永远没有可拉伸的行。所以白板侧一律去掉，只保留
+     左 / 中 / 右。「笔记正文」（真 Markdown 文件，段落会正常折行）仍然保留
+     两端对齐 —— 在那里它是真能看出差别的。相关入口见 ALIGNS 的注释。
 
    ★ 垂直是怎么实现的？（改之前务必看懂，CSS 那段有详细推导）
      Obsidian 原生的卡片正文是这样搭的：
@@ -34,6 +42,33 @@
           状态记在插件自己的 data.json 里。
      另外还给 Markdown 笔记正文提供水平对齐（原生没有此功能）。
 
+   ★ 右键菜单长什么样？
+     右键卡片 →「文本对齐 ▸」→ 鼠标停一下弹出**九宫格子菜单**：
+     3（左/中/右）× 3（上/中/下）= 9 格，外加「仅水平 / 仅垂直」两格和「清除」，
+     12 格一次点完 9 种组合（3 水平 × 3 垂直）。
+     面板里不写解释文字 —— 位置由格子里的小图示表达，格子下只有一个短标签。
+     文件名标签 / 分组标签 / 连线标签仍是文字子菜单：它们都是单行文字，
+     垂直方向没有可移动的余量，九宫格对它们没有意义。
+
+   ★★ 走「原生子菜单」这条路有两个坑（改 addAlignGrid 前必读）
+      ① 子菜单里**必须至少有一个菜单项**。Menu.showAtPosition 的第一句就是
+         `if (0 === this.items.length) return this;` —— 空子菜单根本不显示，
+         DOM 挂上去也白挂。所以先 sub.addItem() 塞一个占位项，
+         再用 CSS（styles.css ⑫ 段的 .cta-grid-menu）把 .menu-scroll 藏掉。
+      ② 菜单项是渲染进 .menu-scroll 的，而 show 时会 sort() → scrollEl.empty()
+         清空重铺。所以面板必须挂在 **.menu 本体**上（.menu-scroll 的兄弟位置），
+         塞进滚动区会在显示的那一瞬间被抹掉。
+      sub.dom 是**构造 Menu 时就建好的**（app.js: `this.dom = createDiv("menu")`），
+      所以 setSubmenu() 一返回就能往里 appendChild，不用等 show。
+      悬停自动弹出也是原生的：pointerover → openSubmenuSoon（250ms 延迟）；
+      点击则是 selectElement(dom, true) → 立即 openSubmenu。
+
+   ★★ 只能「追加」，绝不能重建菜单。（这一条改动时务必守住）
+      Obsidian 自带的菜单项和我们共用同一个菜单 —— 1.9.9 起卡片和分组的
+      右键菜单里有官方自带的「复制」，此外还有编辑 / 删除 / 替换文件……
+      一旦清空 menu.dom（或 sub.dom）重新铺菜单，这些原生项会**全部消失**。
+      所以只 appendChild 一个自己的容器，别的一律不碰、不重排、不隐藏。
+
    ★ 为什么不统一都用「写标记」？
      文本卡走 Markdown 渲染器，HTML 会生效；而分组标签和连线标签由
      Obsidian 用 setText()/text 写入（即 textContent），塞 HTML 会原样
@@ -57,6 +92,11 @@
      node.labelEl                          // 分组 = .canvas-group-label，卡片 = .canvas-node-label
      edge.labelElement.textareaEl          // .canvas-path-label（边有 label 时才存在）
      menu.addItem(i => i.setTitle(..).setSubmenu().addItem(...))
+     item.setSubmenu()                     // 返回一个子菜单 Menu（悬停约 250ms 自动弹出）
+     item.setSubmenu().dom                 // 子菜单的 .menu 容器：九宫格面板挂这里
+                                           // 构造子菜单时就建好了，不用等 show
+                                           // 拿不到就回退成文字子菜单（见 addAlignGrid）
+     menu.hide()                           // 自绘面板不会自动关，点完自己关
      app.fileManager.processFrontMatter(file, fm => ...)
    ============================================================================ */
 
@@ -65,16 +105,31 @@ const { Plugin, PluginSettingTab, Setting, Notice, Menu } = require('obsidian');
 
 /* ══════════════════════════════════════════════════════════ 常量表 */
 
-// 四个水平对齐。letter 用于卡片里的标记，cls 用于运行时挂的类名后缀。
+/* 水平对齐的三个取值 —— **白板侧（卡片正文 + 三种标签）只有这三个**。
+   letter 用于卡片文字里的标记，cls 用于运行时挂的类名后缀（prefix + key）。
+
+   ★ 曾经还有第四个「两端对齐」，已从白板侧去掉：text-align: justify 按规范
+     **不拉伸最后一行**，而卡片里常是两三行短句、标签更是单行文字，看上去
+     和左对齐一模一样 —— 用户实测「在卡片里面用不了」。它的 CSS 规则（
+     cta-card-justify / cta-group-justify / cta-path-justify / cta-nlabel-justify）
+     也一并删了。
+     老文件里可能还留着 cta-j 标记或 justif 类名：CSS 没了 ⇒ 渲染就是左对齐，
+     所以读回来时统一按左对齐处理，见 canvasAlignKey()。 */
 const ALIGNS = [
-  { key: 'left',    letter: 'l', label: '左对齐',   icon: 'align-left' },
-  { key: 'center',  letter: 'c', label: '居中',     icon: 'align-center' },
-  { key: 'right',   letter: 'r', label: '右对齐',   icon: 'align-right' },
-  { key: 'justify', letter: 'j', label: '两端对齐', icon: 'align-justify' }
+  { key: 'left',   letter: 'l', label: '左对齐', icon: 'align-left' },
+  { key: 'center', letter: 'c', label: '居中',   icon: 'align-center' },
+  { key: 'right',  letter: 'r', label: '右对齐', icon: 'align-right' }
 ];
 const ALIGN_KEYS = ALIGNS.map(function (a) { return a.key; });
+
+// 「两端对齐」只留给**笔记正文**：真 Markdown 文件，段落正常折行，它是有意义的。
+// 用到 NOTE_ALIGNS 的地方只有两处：笔记正文命令、设置里「卡片内嵌笔记的正文」。
+const JUSTIFY_ALIGN = { key: 'justify', letter: 'j', label: '两端对齐', icon: 'align-justify' };
+const NOTE_ALIGNS = ALIGNS.concat([JUSTIFY_ALIGN]);
+
+// key → 对齐对象。★ 两端对齐也收进来：老数据里可能还有它，查标签时不能查空。
 const ALIGN_BY_KEY = {};
-ALIGNS.forEach(function (a) { ALIGN_BY_KEY[a.key] = a; });
+NOTE_ALIGNS.forEach(function (a) { ALIGN_BY_KEY[a.key] = a; });
 
 // 三个垂直位置。letter 同样是 't'|'m'|'b'，标记写作 cta-vt / cta-vm / cta-vb。
 // ★ 前缀里那个 v 是必需的：没有它就分不清 cta-t（垂直顶）和水平标记的字母。
@@ -142,8 +197,23 @@ const V_TAG_ALL  = /[ \t]*#cta-v[tmb]\b/g;
 const V_MARK_ONE = /<span class="cta-v([tmb])"><\/span>/;
 const V_TAG_ONE  = /(?:^|\s)#cta-v([tmb])\b/;
 
+// 标记字母 → 对齐 key。★ j（两端对齐）保留在这里：老卡片文字里可能还写着
+// #cta-j，读得出来才不会让读回逻辑崩掉；白板侧已经不给设置了，见 ALIGNS。
 const LETTER2KEY = { l: 'left', c: 'center', r: 'right', j: 'justify' };
 const VLETTER2KEY = { t: 'top', m: 'middle', b: 'bottom' };
+
+/* 白板侧读回来的对齐 key 收一下口：不在 ALIGNS（左/中/右）里的一律按左对齐算。
+
+   为什么需要它：两端对齐已从白板去掉、CSS 也删了，老卡片文字里可能还留着
+   #cta-j 标记 —— 那种卡片**实际渲染出来就是左对齐**。不收口的话，
+   九宫格会一格都不高亮、状态文字还会显示出一个面板里根本没有的「两端对齐」。
+
+   （笔记正文的 justif 不受影响：它走 setNoteAlign / frontmatter 那条路，
+     不经过这里。所以这里收口是安全的。） */
+function canvasAlignKey(h) {
+  if (h == null) return null;
+  return ALIGN_KEYS.indexOf(h) >= 0 ? h : 'left';
+}
 
 // 这张卡片当前用的是哪种水平对齐？没有标记返回 null（表示跟随全局默认）。
 function readAlign(text) {
@@ -250,6 +320,115 @@ function mergeNoteClass(current, mode) {
 }
 
 
+/* ---------- D. 右键九宫格 ---------- */
+
+/* 九宫格 = 水平 3 种 × 垂直 3 种 = 9 个位置，再加「仅水平 / 仅垂直」两格和
+   「清除」，共 12 格。
+
+   ★ 为什么没有「两端对齐」那一排：白板侧不该有它，理由见 ALIGNS 的注释。
+
+   ★ 面板里不写解释文字（用户明确要求简洁）：位置由格子里的小图示表达 ——
+     两条短线，横向位置 = 水平对齐，纵向位置 = 垂直对齐。
+     唯一的文字是面板上方那行状态小字，见 stateText()。
+
+   每格三个字段：
+     h / v   要设定的对齐值。null = 「这个方向不动」（仅水平 / 仅垂直那两格）
+     clear   true = 两个方向一起恢复默认
+     label   一律 2–3 个字，面板要的就是一眼看完 */
+// 菜单里那一项的标题。用户定的叫法：右键 →「文本对齐 ▸」→ 悬停出九宫格。
+// 多选时后面缀张数（'文本对齐（3 张）'）。
+const GRID_ITEM_TITLE = '文本对齐';
+
+const ALIGN_GRID_ROWS = [
+  { label: '', divider: false, cells: [
+    { label: '左上', h: 'left',   v: 'top' },
+    { label: '上中', h: 'center', v: 'top' },
+    { label: '右上', h: 'right',  v: 'top' }
+  ] },
+  { label: '', divider: false, cells: [
+    { label: '左中', h: 'left',   v: 'middle' },
+    { label: '正中', h: 'center', v: 'middle' },
+    { label: '右中', h: 'right',  v: 'middle' }
+  ] },
+  { label: '', divider: false, cells: [
+    { label: '左下', h: 'left',   v: 'bottom' },
+    { label: '下中', h: 'center', v: 'bottom' },
+    { label: '右下', h: 'right',  v: 'bottom' }
+  ] },
+  // 只改一个方向。九宫格每格都同时定两个轴，这两种情况得单独留位置 ——
+  // 否则设了「正中」，垂直位置就被顺手改掉了，而用户只想改水平。
+  { label: '居中', divider: true, cells: [
+    { label: '仅水平', h: 'center', v: null },
+    { label: '仅垂直', h: null,     v: 'middle' }
+  ] },
+  { label: '', divider: true, cells: [
+    { label: '清除', h: null, v: null, clear: true }
+  ] }
+];
+
+// 小图示的坐标系。CSS 里 .cta-glyph 就是 22×16，两边必须一致。
+const GLYPH_W = 22;
+const GLYPH_H = 16;
+const GLYPH_BAR = 2;                       // 线粗
+
+// 水平取值 → 短线的左端。三种对齐的线一样长，只有横向位置不同
+// （两端对齐去掉之前，它的线是加长的 18px，那是唯一需要 per-key 宽度的取值）。
+const GLYPH_X  = { left: 2, center: 6, right: 10 };
+// 22 - 10 = 12 ⇒ 左:2..12 中:6..16 右:10..20，三种位置一眼可辨
+const GLYPH_BAR_W = 10;
+// 垂直取值 → 两条短线的纵向位置。2 + (16-2)/2 = 8，正好是正中
+const GLYPH_Y  = { top: [2, 6], middle: [5, 9], bottom: [8, 12] };
+
+/* 两条短线的几何：[[左, 上, 宽], ...]，在 22×16 的坐标系里。纯函数，可单测。
+     两个方向都有值 → 横向位置表示水平，纵向位置表示垂直
+     只有水平       → 线横向按水平摆、纵向撑到两头 ⇒ 「垂直不动」
+     只有垂直       → 两根短线分列左右、纵向居中   ⇒ 「水平不动」
+     清除           → 不画线 */
+function glyphBars(h, v) {
+  if (h && v) {
+    const x = GLYPH_X[h], ys = GLYPH_Y[v];
+    if (x == null || ys == null) return [];
+    return [[x, ys[0], GLYPH_BAR_W], [x, ys[1], GLYPH_BAR_W]];
+  }
+  if (h) {
+    const x = GLYPH_X[h];
+    if (x == null) return [];
+    return [[x, 2, GLYPH_BAR_W], [x, GLYPH_H - 4, GLYPH_BAR_W]];
+  }
+  if (v) {
+    const y = (GLYPH_H - GLYPH_BAR) / 2;   // 纵向居中
+    return [[2, y, 6], [GLYPH_W - 8, y, 6]];
+  }
+  return [];
+}
+
+// (h, v) 对应哪一格？找不到返回 null（h 为空 = 这根轴没单独设置过）。
+function gridCellFor(h, v) {
+  if (!h || !v) return null;
+  for (let i = 0; i < ALIGN_GRID_ROWS.length; i++) {
+    const cells = ALIGN_GRID_ROWS[i].cells;
+    for (let j = 0; j < cells.length; j++) {
+      const c = cells[j];
+      if (!c.clear && c.h === h && c.v === v) return c;
+    }
+  }
+  return null;
+}
+
+/* 面板右上角那一行小字：这几张卡片现在是什么状态。整个面板里唯一的文字提示。
+   state: { h, v, defV, mixed } —— h / v 为 null 表示这根轴没单独设置过。
+   ★ 垂直用 state.v || state.defV（实际落地的值），这样显示的才是眼睛看到的位置。 */
+function stateText(state) {
+  if (!state) return '';
+  if (state.mixed) return '多张不一致';
+  const cell = gridCellFor(state.h, state.v || state.defV);
+  if (cell) return cell.label;
+  if (state.h) return (ALIGN_BY_KEY[state.h] || {}).label || '';
+  if (state.v) return (VALIGN_BY_KEY[state.v] || {}).label || '';
+  return '跟随默认';
+}
+
+
 /* ══════════════════════════════════════════════════════════ 设置面板 */
 
 class CanvasNodeAlignSettingTab extends PluginSettingTab {
@@ -283,7 +462,10 @@ class CanvasNodeAlignSettingTab extends PluginSettingTab {
         .addDropdown(function (dd) {
           // 「卡片内嵌笔记的正文」多一个「跟随卡片」选项
           if (t.key === 'note') dd.addOption('inherit', '跟随卡片');
-          ALIGNS.forEach(function (a) { dd.addOption(a.key, a.label); });
+          // ★ 笔记正文保留两端对齐（真 Markdown，段落会折行），白板侧只有三个
+          (t.key === 'note' ? NOTE_ALIGNS : ALIGNS).forEach(function (a) {
+            dd.addOption(a.key, a.label);
+          });
           dd.setValue(p.settings.defaults[t.key] || DEFAULT_SETTINGS.defaults[t.key]);
           dd.onChange(async function (v) {
             p.settings.defaults[t.key] = v;
@@ -302,8 +484,8 @@ class CanvasNodeAlignSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('卡片正文')
-      .setDesc('卡片比文字高出一截时，正文落在哪个高度。逐张设置时用右键菜单 →' +
-               '「卡片文字对齐 · 垂直」，这里只是没单独设置过的卡片的默认值。')
+      .setDesc('卡片比文字高出一截时，正文落在哪个高度。逐张设置时用右键卡片的' +
+               '「文本对齐」九宫格，这里只是没单独设置过的卡片的默认值。')
       .addDropdown(function (dd) {
         VALIGNS.forEach(function (a) { dd.addOption(a.key, a.label); });
         dd.setValue(p.settings.cardV || DEFAULT_SETTINGS.cardV);
@@ -315,14 +497,16 @@ class CanvasNodeAlignSettingTab extends PluginSettingTab {
         });
       });
 
-    containerEl.createEl('h3', { text: '两端对齐的细节' });
+    // 白板侧已经没有两端对齐了（见 ALIGNS 注释），这个开关只剩「笔记正文」用得上
+    containerEl.createEl('h3', { text: '两端对齐（只作用于笔记正文）' });
 
     new Setting(containerEl)
-      .setName('两端对齐时，最后一行也拉满')
-      .setDesc('按排版规范，两端对齐**不拉伸最后一行**。中文短句常常只有一行，' +
-               '于是设了两端对齐看起来和左对齐一模一样 —— 不是没生效，是没有可拉伸的行。' +
-               '打开这个开关就会连最后一行一起拉满，短句也能立刻看出差别。' +
-               '（英文长段落默认效果已经很明显，一般不用开。）')
+      .setName('最后一行也拉满')
+      .setDesc('按排版规范，两端对齐**不拉伸最后一行**。开启后连最后一行一起拉满' +
+               '（text-align-last: justify），短句也会被撑开；' +
+               '英文长段落默认效果已经很明显，一般不用开。' +
+               '★ 只影响「笔记正文」—— 白板里的卡片和标签已经没有两端对齐了，' +
+               '那儿的文字常只有一两行，设了也看不出差别。')
       .addToggle(function (tg) {
         tg.setValue(!!p.settings.justifyLast);
         tg.onChange(async function (v) {
@@ -335,8 +519,8 @@ class CanvasNodeAlignSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: '逐张 / 逐组 / 逐条设置' });
 
     const tips = containerEl.createEl('div', { cls: 'setting-item-description' });
-    tips.createEl('p', { text: '· 卡片正文水平 / 垂直：右键卡片 →「卡片文字对齐 · 水平 / 垂直」' });
-    tips.createEl('p', { text: '· 分组标签 / 连线标签 / 文件名标签：右键 →「标签对齐」' });
+    tips.createEl('p', { text: '· 卡片正文：右键卡片 →「文本对齐」→ 九宫格（水平 × 垂直，9 种组合，另有清除）' });
+    tips.createEl('p', { text: '· 文件名标签 / 分组标签 / 连线标签：右键 → 对应的标签对齐菜单' });
     tips.createEl('p', {
       text: '这些单独设置记在本插件的数据文件里，不会写进 .canvas（所以白板文件依旧是标准格式）。'
     });
@@ -412,6 +596,24 @@ module.exports = class CanvasNodeAlign extends Plugin {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, raw);
     this.settings.defaults = Object.assign({}, DEFAULT_SETTINGS.defaults, raw.defaults || {});
     this.settings.perItem = raw.perItem || {};
+
+    // ★ 迁移：白板侧已经没有「两端对齐」了（见 ALIGNS 注释）。老 data.json 里
+    //   可能还存着 justif ——
+    //     设置里的默认值不收口 ⇒ 下拉框里没有这个选项，会显示成空白；
+    //     逐条记录不收口   ⇒ 自检报告里会冒出一个 UI 上根本没有的「两端对齐」。
+    //   （键名以 v: 开头的是整张卡片的**垂直**位置，值域 top/middle/bottom，别碰；
+    //     笔记正文的 justif 也不在这里，它存在笔记的 frontmatter 里。）
+    const self = this;
+    ['card', 'label', 'group', 'path'].forEach(function (k) {
+      const v = self.settings.defaults[k];
+      if (v && ALIGN_KEYS.indexOf(v) < 0) self.settings.defaults[k] = 'left';
+    });
+    Object.keys(this.settings.perItem).forEach(function (p) {
+      const bucket = self.settings.perItem[p];
+      Object.keys(bucket).forEach(function (k) {
+        if (k.charAt(0) !== 'v' && ALIGN_KEYS.indexOf(bucket[k]) < 0) bucket[k] = 'left';
+      });
+    });
   }
 
   async saveSettings() {
@@ -450,14 +652,19 @@ module.exports = class CanvasNodeAlign extends Plugin {
         if (!node || !node.canvas || node.canvas.readonly) return;
 
         if (isTextNode(node)) {
-          // ① 卡片正文水平 —— 靠标记，逐张
-          this.addAlignGroup(menu, '卡片文字对齐 · 水平', 'align-left',
-            (key) => this.applyToNodes([node], key));
-          // 垂直同理，另一个标记、另一条路
-          this.addVAlignGroup(menu, '卡片文字对齐 · 垂直',
-            (key) => this.applyToNodesV([node], key));
+          // ① + ② 卡片正文：「文本对齐 ▸」子菜单里的九宫格，一格同时管水平和
+          //    垂直（9 种组合 + 清除）。
+          if (!this.addAlignGrid(menu, this.gridState([node]),
+                (cell) => this.applyGrid([node], cell))) {
+            // 挂不进去（旧版本 / 系统原生菜单）⇒ 退回原来的两个文字子菜单，
+            // 功能一个不少，只是没有图形化面板。
+            this.addAlignGroup(menu, '卡片文字对齐 · 水平', 'align-left',
+              (key) => this.applyToNodes([node], key));
+            this.addVAlignGroup(menu, '卡片文字对齐 · 垂直',
+              (key) => this.applyToNodesV([node], key));
+          }
 
-          // ③ 卡片文件名标签 —— 靠类名，逐张
+          // ③ 卡片文件名标签 —— 靠类名，逐张。单行文字，没有垂直方向，仍是文字菜单
           if (node.labelEl) {
             this.addAlignGroup(menu, '文件名标签对齐', 'text-cursor-input',
               (key) => this.setItemAlign(node.canvas, 'label', node, key, NLABEL_CLS));
@@ -465,6 +672,8 @@ module.exports = class CanvasNodeAlign extends Plugin {
         } else if (isAlignableCard(node)) {
           // ⑦ 嵌入笔记 / 网页的卡片：内容是别人的文件，写不了标记 ⇒ 只挂类名，
           //    状态记在插件数据里（和标签那几处同一个机制）。
+          //    ★ 这类卡片只有垂直一条通道（水平得往正文里写标记，写不了），
+          //      所以不套九宫格，保留垂直子菜单。
           this.addVAlignGroup(menu, '卡片文字对齐 · 垂直',
             (key) => this.setItemAlign(node.canvas, 'vcard', node, key, VCARD_CLS));
 
@@ -491,10 +700,16 @@ module.exports = class CanvasNodeAlign extends Plugin {
       this.app.workspace.on('canvas:selection-menu', (menu, canvas) => {
         const nodes = this.textNodesOf(canvas);
         if (!nodes.length) return;
-        this.addAlignGroup(menu, '卡片文字对齐 · 水平（' + nodes.length + ' 张）', 'align-left',
-          (key) => this.applyToNodes(nodes, key));
-        this.addVAlignGroup(menu, '卡片文字对齐 · 垂直（' + nodes.length + ' 张）',
-          (key) => this.applyToNodesV(nodes, key));
+        // 多选也走九宫格：一次把 N 张卡片设成同一个位置。
+        // 这 N 张当前设置不一致时不预先高亮任何一格（gridState 会给 mixed）。
+        if (!this.addAlignGrid(menu, this.gridState(nodes),
+              (cell) => this.applyGrid(nodes, cell),
+              GRID_ITEM_TITLE + '（' + nodes.length + ' 张）')) {
+          this.addAlignGroup(menu, '卡片文字对齐 · 水平（' + nodes.length + ' 张）', 'align-left',
+            (key) => this.applyToNodes(nodes, key));
+          this.addVAlignGroup(menu, '卡片文字对齐 · 垂直（' + nodes.length + ' 张）',
+            (key) => this.applyToNodesV(nodes, key));
+        }
       })
     );
 
@@ -507,6 +722,127 @@ module.exports = class CanvasNodeAlign extends Plugin {
         this.reapplyCanvas(edge.canvas);
       })
     );
+  }
+
+  /* 在菜单里加一项「文本对齐 ▸」，九宫格面板挂在它的**子菜单**里 ——
+     原生菜单负责悬停弹出、贴屏幕边缘的翻转和关闭，我们只管往子菜单的
+     .menu 容器里 appendChild 一个面板。
+
+     成功返回 true；挂不进去返回 false，调用方回退成两个文字子菜单。
+
+     ★ 三个必须守住的点（改之前先看文件头 ★★ 那段）：
+       ① 只 appendChild 自己的容器，**绝不重建菜单、不重排、不隐藏**任何东西。
+          「复制卡片」（Obsidian 1.9.9 起自带）、编辑、删除这些原生项和我们
+          共用同一个菜单，一重建就全没了。
+       ② 子菜单里必须先塞一个菜单项：Menu.showAtPosition 开头就是
+          `if (0 === this.items.length) return this;` —— 空子菜单根本不显示。
+          这一项被 CSS 藏掉（.cta-grid-menu 那条）。
+       ③ 面板挂在 .menu 本体、不塞 .menu-scroll：show 时会 sort() 清空滚动区。 */
+  addAlignGrid(menu, state, onPick, title) {
+    // useSubmenu 是启动时探测的结果（canUseSubmenu 里连 sub.dom 一起验过）。
+    // 不支持就整个不挂 —— 不能在菜单上留一个点了没反应的死项。
+    if (!this.useSubmenu || !menu || typeof menu.addItem !== 'function') return false;
+    let ok = false;
+    try {
+      menu.addItem(function (item) {
+        item.setTitle(title || GRID_ITEM_TITLE).setIcon('layout-grid').setSection('action');
+        const sub = item.setSubmenu();
+        const host = sub && sub.dom;
+        if (!host || typeof host.appendChild !== 'function') return;
+
+        // ② 占位项：让 items.length > 0，否则这个子菜单不会显示。
+        sub.addItem(function (i) { i.setTitle(GRID_ITEM_TITLE).setIsLabel(true); });
+
+        // 星号那段说的「宿主 DOM」：真机上就是渲染进程的 document，
+        // 借菜单容器自己的 ownerDocument 拿更稳（也省得依赖全局）。
+        const doc = (host.ownerDocument) ||
+          (typeof document !== 'undefined' ? document : null);
+        if (!doc || typeof doc.createElement !== 'function') return;
+
+        host.classList.add('cta-grid-menu');
+        host.appendChild(buildAlignPanel({
+          doc: doc,
+          state: state,
+          onPick: onPick,
+          // 原生菜单点任意一项都会自己关掉，自绘面板不会 ⇒ 点完手动关，
+          // 手感才和菜单里其它项一致。（面板在 sub.dom 里，点它不会触发
+          // 菜单自己的「点外面」关闭 —— Menu.isInside 认得出来。）
+          close: function () { if (typeof menu.hide === 'function') menu.hide(); }
+        }));
+        ok = true;
+      });
+    } catch (e) {
+      console.error('[canvas-node-align] 九宫格子菜单没挂上，改用文字菜单', e);
+      return false;
+    }
+    return ok;
+  }
+
+  /* 这几张卡片当前是什么状态？多张不一致时 mixed = true（不高亮任何一格）。
+     ★ 垂直取「实际落地」的位置（没写标记就用设置里的默认值），
+       这样高亮的是眼睛看到的那一格，而不是「未设置」这种抽象状态。
+     ★ 水平用 canvasAlignKey 收口：老卡片里可能还留着 #cta-j（两端对齐已从
+       白板去掉），那种卡片实际是左对齐，不收口面板会一格都不亮。 */
+  gridState(nodes) {
+    let h;
+    let v;
+    let mixed = false;
+    (nodes || []).forEach((n) => {
+      if (!isTextNode(n)) return;
+      const nh = canvasAlignKey(readAlign(n.text));
+      const nv = readVAlign(n.text);
+      if (h === undefined) { h = nh; v = nv; return; }
+      if (nh !== h || nv !== v) mixed = true;
+    });
+    return {
+      h: h === undefined ? null : h,
+      v: v === undefined ? null : v,
+      defV: this.defaultVAlign(),
+      mixed: mixed
+    };
+  }
+
+  /* 九宫格点选：一次设定两个方向。
+     ★ 两个方向合并成**一次存盘**。saveCanvas 会推入撤销历史，分两次存会让
+       用户按两次 Ctrl+Z 才能退回一步操作 —— 「正中」这种两轴同改的格子尤其明显。 */
+  applyGrid(nodes, cell) {
+    let canvas = null;
+    let changed = 0;
+
+    for (const node of nodes) {
+      if (!isTextNode(node)) continue;
+      canvas = canvas || node.canvas;
+
+      const before = String(node.text == null ? '' : node.text);
+      let next = before;
+      if (cell.clear) {
+        next = stripMarks(next);                      // 两个方向一起抹掉
+      } else {
+        if (cell.h) next = withAlign(next, cell.h);   // 只动点到的那个方向
+        if (cell.v) next = withVAlign(next, cell.v);
+      }
+      if (next !== before) {
+        writeText(node, next);
+        changed++;
+      }
+
+      // 渲染层：和 applyToNodes 一样，文字没变也必须保证类名是对的
+      // （刚重渲染过、或用户手抄了标记的情况）。
+      if (cell.clear) {
+        this.applyCardAlign(node, null);
+        this.applyCardVertical(node, this.defaultVAlign());
+      } else {
+        if (cell.h) this.applyCardAlign(node, cell.h);
+        if (cell.v) this.applyCardVertical(node, cell.v);
+      }
+    }
+
+    if (changed && canvas) saveCanvas(canvas);
+    if (!changed) return;                             // 没有实际改动就不发提示
+
+    new Notice(cell.clear
+      ? '已清除 ' + changed + ' 张卡片的对齐'
+      : '已设置 ' + changed + ' 张卡片：' + cell.label);
   }
 
   // 在菜单里加一组「水平对齐」：优先收进子菜单；当前版本没有 setSubmenu 时平铺。
@@ -669,7 +1005,9 @@ module.exports = class CanvasNodeAlign extends Plugin {
     });
 
     // 笔记正文对齐（只有水平 —— 整篇笔记的垂直居中意义不大，而且长文会很怪）
-    ALIGNS.forEach((a) => {
+    // ★ 用 NOTE_ALIGNS：这里比白板侧多一个「两端对齐」，因为真 Markdown 文件的
+    //   段落会正常折行，两端对齐是看得出效果的。
+    NOTE_ALIGNS.forEach((a) => {
       this.addCommand({
         id: 'note-' + a.key,
         name: '笔记正文：' + a.label,
@@ -748,7 +1086,8 @@ module.exports = class CanvasNodeAlign extends Plugin {
       '其中已挂水平类名：' + (cardCls < 0 ? '不在白板视图' : cardCls + ' 张'),
       '其中已挂垂直类名：' + (vCls < 0 ? '不在白板视图' : vCls + ' 张'),
       '卡片默认垂直位置：' + (this.settings.cardV || DEFAULT_SETTINGS.cardV),
-      '两端对齐拉满末行：' + (this.settings.justifyLast ? '已开启' : '关闭'),
+      '水平对齐可选值：' + ALIGN_KEYS.join(' / ') + '（白板侧；笔记正文另有 justify）',
+      '两端对齐拉满末行（笔记）：' + (this.settings.justifyLast ? '已开启' : '关闭'),
       '各位置默认水平对齐：' + TARGETS.map(function (t) {
         return t.label + ' ' + (this.settings.defaults[t.key] || '-');
       }, this).join(' · '),
@@ -957,7 +1296,10 @@ module.exports = class CanvasNodeAlign extends Plugin {
     const el = this.labelElOf(canvas, kind, obj);
     if (!el) return false;
     clearAlignClasses(el, [prefix]);
-    if (align) el.classList.add(prefix + align);
+    // 标签只有左/中/右（两端对齐在单行文字上永远不生效）。老 data.json 里可能
+    // 还存着 justif，不收口会挂上一个 CSS 里已经不存在的类名。
+    const key = kind === 'vcard' ? align : canvasAlignKey(align);
+    if (key) el.classList.add(prefix + key);
     return true;
   }
 
@@ -1096,16 +1438,110 @@ module.exports = class CanvasNodeAlign extends Plugin {
 };
 
 
+/* ══════════════════════════════════════════════════════════ 九宫格面板（DOM） */
+
+// 建一个元素。面板里没有富文本，纯 DOM 比 innerHTML 稳（也不用担心卡片里的
+// <span> 标记被当成 HTML 解析）。
+function mkEl(doc, tag, cls, text) {
+  const el = doc.createElement(tag);
+  if (cls) el.className = cls;
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+/* 九宫格面板本体。挂在「文本对齐 ▸」的**子菜单容器**（sub.dom）里 ——
+   子菜单和原生项各在各的容器，我们只 appendChild 自己这一个 div，
+   不新建菜单、不重排、不隐藏任何东西（见文件头 ★★ 那段）。
+
+   结构（4 组，组间一条细线）：
+     九宫格 3×3                        ← 左上 … 右下，正中 = 两个居中一起
+     行标「两端」+ 顶部 / 中部 / 底部     ← 两端对齐 × 三个垂直位置
+     行标「居中」+ 仅水平 / 仅垂直        ← 只改一个方向
+     清除                              ← 两个方向一起回默认
+   每格 = 小图示（两条短线）+ 短标签，没有别的文字。 */
+function buildAlignPanel(opts) {
+  const doc = opts.doc || document;
+  const state = opts.state || {};
+  const panel = mkEl(doc, 'div', 'cta-grid');
+
+  const head = mkEl(doc, 'div', 'cta-grid-head');
+  // 标题是可选的：放在子菜单里时，菜单项自己写着「文本对齐」，面板里再写一遍
+  // 纯属占地方（用户要求简洁），所以调用方不传就没有。
+  if (opts.title) head.appendChild(mkEl(doc, 'span', 'cta-grid-title', opts.title));
+  head.appendChild(mkEl(doc, 'span', 'cta-grid-state', stateText(state)));
+  panel.appendChild(head);
+
+  ALIGN_GRID_ROWS.forEach(function (row) {
+    if (row.divider) panel.appendChild(mkEl(doc, 'div', 'cta-grid-line'));
+
+    const line = mkEl(doc, 'div', 'cta-grid-row');
+    line.appendChild(mkEl(doc, 'div', 'cta-grid-rowhead', row.label || ''));
+
+    const box = mkEl(doc, 'div', 'cta-grid-cells cta-cols-' + row.cells.length);
+    row.cells.forEach(function (cell) {
+      const el = mkEl(doc, 'div', 'cta-grid-cell');
+
+      if (cell.clear) {
+        el.classList.add('is-wide');
+        el.appendChild(mkEl(doc, 'span', null, cell.label));
+      } else {
+        const glyph = mkEl(doc, 'div', 'cta-glyph');
+        glyphBars(cell.h, cell.v).forEach(function (b) {
+          const bar = mkEl(doc, 'i');
+          bar.style.left = b[0] + 'px';
+          bar.style.top = b[1] + 'px';
+          bar.style.width = b[2] + 'px';
+          glyph.appendChild(bar);
+        });
+        el.appendChild(glyph);
+        el.appendChild(mkEl(doc, 'span', null, cell.label));
+      }
+
+      // 当前生效的那一格高亮。多选且互不一致时哪个都不亮。
+      if (isCellOn(cell, state)) el.classList.add('is-on');
+
+      el.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (typeof opts.onPick === 'function') opts.onPick(cell);
+        if (typeof opts.close === 'function') opts.close();
+      });
+      box.appendChild(el);
+    });
+
+    line.appendChild(box);
+    panel.appendChild(line);
+  });
+
+  return panel;
+}
+
+// 这一格是不是「当前生效」的那一格？
+function isCellOn(cell, state) {
+  if (!state || state.mixed) return false;
+  if (cell.clear) return !state.h && !state.v;      // 两根轴都没单独设置过
+  if (!state.h) return false;                       // 水平没设过 ⇒ 九宫格没有对应格
+  return cell.h === state.h && cell.v === (state.v || state.defV);
+}
+
+
 /* ══════════════════════════════════════════════════════════ 兼容性封装 */
 
-// 当前 Obsidian 支不支持给菜单项加子菜单（MenuItem.setSubmenu）。
-// 拿一个临时菜单探一下即可，避免在不支持的版本上直接报错。
+/* 这台 Obsidian 支不支持「菜单项挂自绘子菜单」？不支持的版本上九宫格整块不挂、
+   回退成文字子菜单，否则会在菜单里留一个点了没反应的死项。
+
+   探针是**真的** new 一个 Menu 加一项试，不是看版本号 —— 版本号猜不准。
+   探针菜单从不 show，所以没有副作用（Menu 的 scope 是在 onload 里才注册的）。
+   ★ 连 sub.dom 一起验：只要 setSubmenu 存在它就一定在（app.js 里 Menu 的
+     dom 是构造函数里建的），但万一哪版变了，这里能提前发现并整块回退。 */
 function canUseSubmenu() {
   try {
     const probe = new Menu();
     let ok = false;
     probe.addItem(function (item) {
-      ok = typeof item.setSubmenu === 'function';
+      if (typeof item.setSubmenu !== 'function') return;
+      const sub = item.setSubmenu();
+      ok = !!(sub && sub.dom && typeof sub.dom.appendChild === 'function');
     });
     return ok;
   } catch (e) {
@@ -1183,5 +1619,15 @@ function saveCanvas(canvas) {
    （Obsidian 环境里 module.exports 是插件类，这里只在 Node 下补充挂载） */
 module.exports.__pure = {
   readAlign, readVAlign, stripMarks, withAlign, withVAlign,
-  clearAlignClasses, readAlignClass, toArray, mergeNoteClass
+  clearAlignClasses, readAlignClass, toArray, mergeNoteClass, canvasAlignKey,
+  // 白板侧只有左/中/右；两端对齐只留给笔记正文（见 ALIGNS 注释）
+  ALIGN_KEYS, NOTE_ALIGNS, JUSTIFY_ALIGN,
+  // 九宫格（2.3.0）：模型 + 小图示几何 + 状态文字，都是纯函数
+  glyphBars, gridCellFor, stateText, ALIGN_GRID_ROWS,
+  GLYPH_W, GLYPH_H, GLYPH_BAR, GRID_ITEM_TITLE
 };
+
+/* 面板的 DOM 构造单独导出给单测 —— 这块只能在真机的原生菜单里跑，
+   单测用极简 DOM 替身把结构（12 格 / 每组线数 / 高亮唯一 / 点完关菜单）钉住，
+   免得改坏了要开着 Obsidian 靠眼睛找。 */
+module.exports.__dom = { buildAlignPanel, isCellOn, mkEl };

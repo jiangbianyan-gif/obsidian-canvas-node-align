@@ -3,6 +3,49 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.3.0 — 2026-09-30
+
+**A right-click nine-grid for card bodies**, and one option removed from the
+Canvas side because it could not do anything there.
+
+**Added**
+
+- Right-clicking a card now offers **文本对齐** (*text alignment*), which opens a
+  **3 × 3 grid** as a submenu: one click sets both axes at once
+  (left / centre / right × top / middle / bottom). Each cell draws two short
+  lines — their horizontal position is the horizontal alignment and their
+  vertical position is the vertical one — so the panel needs no explanatory text.
+- Three further cells: **仅水平** / **仅垂直** (*horizontal only* / *vertical
+  only*, which change one axis and leave the other exactly as it is) and
+  **清除** (*clear*). The cell currently in effect is highlighted, and a one-word
+  caption above the grid names it.
+- Works on a multi-card selection as well, so a whole selection can be set to one
+  position in a single step.
+
+**Removed**
+
+- **Justify is gone from the Canvas side.** `text-align: justify` only stretches
+  the lines that are *not* the last one, so it needs a paragraph that wraps onto
+  several lines. Card text is usually two or three short lines and all three label
+  types are a single line, where justify is indistinguishable from left-alignment.
+  Card bodies and labels now offer **left / centre / right** only, and the four
+  `*-justify` rules were deleted from the stylesheet.
+  Markdown **note bodies** keep justify — those are real files whose paragraphs
+  wrap, so it does work there. The related settings toggle is now called
+  *stretch the last line* and is documented as affecting notes only.
+- `#cta-j` markers left in existing cards are read back as left-aligned (which is
+  what they render as now), and a `justify` value stored for a label in the
+  plugin's data file is migrated to `left` the next time the plugin loads.
+
+**Notes**
+
+- The grid is inserted as a **submenu of the native menu**, so everything Obsidian
+  itself puts there — including *Duplicate*, added to the card and group menus in
+  Obsidian 1.9.9 — stays exactly where it was. Hover over 文本对齐 to open the
+  grid (it appears after about a quarter of a second), or click it.
+- The grid cells are not part of the menu's keyboard navigation; the arrow keys
+  move through the menu item itself.
+
 ## 2.2.0 — 2026-09-30
 
 **Vertical alignment**, plus the build tooling the community directory needs in

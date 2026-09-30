@@ -10,8 +10,9 @@
      会因「大范围选择器失效 → 性能问题」把 has 伪类 判为警告。挂类名是等价的
      O(1) 匹配，没有这个副作用。改动时请**不要**把 has 伪类 加回来。
    ----------------------------------------------------------------------------
-   对齐有两个方向，互相独立，可任意组合（4 × 3 = 12 种）：
-     水平 text-align  →  left | center | right | justify
+   对齐有两个方向，互相独立，可任意组合（白板侧 3 × 3 = 9 种）：
+     水平 text-align  →  left | center | right ← 白板只有这三个
+                         笔记正文另有 justify（真 Markdown，段落会折行）
      垂直 由弹性占位块  →  top  | middle | bottom
    ----------------------------------------------------------------------------
    本文件分 11 段：
@@ -29,7 +30,7 @@
 /* 插件设置面板会把这些变量写到 <body> 上（body 比 :root 更靠下，
    所以面板里的值会覆盖这里的默认值）。直接改这里的值也行。 */
 :root {
-  --cta-card:  left;      /* 白板卡片正文水平：left | center | right | justify */
+  --cta-card:  left;      /* 白板卡片正文水平：left | center | right */
   --cta-note:  inherit;   /* 卡片内嵌笔记的正文水平：inherit = 跟随所在卡片，★别改成 left */
   --cta-label: left;      /* 卡片文件名标签 */
   --cta-group: center;    /* 分组标签 */
@@ -63,7 +64,8 @@
 .canvas-node.cta-card-left    .canvas-node-content { text-align: left; }
 .canvas-node.cta-card-center  .canvas-node-content { text-align: center; }
 .canvas-node.cta-card-right   .canvas-node-content { text-align: right; }
-.canvas-node.cta-card-justify .canvas-node-content { text-align: justify; }
+/* ★ 没有 .cta-card-justify —— 两端对齐已从白板侧去掉，理由见 main.js 的 ALIGNS 注释。
+   老卡片文字里残留的 #cta-j 因此渲染成左对齐，这是预期行为。 */
 
 
 /* ═══════════════════════════════════════════ ③ 卡片正文：垂直（运行时类名） ═════════ */
@@ -186,19 +188,14 @@
   :is(.cm-content, .cm-line) { text-align: center; }
 .canvas-node.cta-card-right   .canvas-node-content .markdown-source-view.mod-cm6
   :is(.cm-content, .cm-line) { text-align: right; }
-.canvas-node.cta-card-justify .canvas-node-content .markdown-source-view.mod-cm6
-  :is(.cm-content, .cm-line) { text-align: justify; }
+/* ★ 没有 .cta-card-justify 的对应条目 —— 同上一段，白板侧已去掉两端对齐。 */
 
-/* ── 两端对齐的补充说明（设置里有开关） ──────────────────────────────
-   按排版规范，两端对齐**不拉伸最后一行**。中文短句常常只有一行，
-   于是看起来和左对齐一模一样 —— 不是没生效，是没有可拉伸的行。
-   想让短句也拉满，在设置里打开「两端对齐时最后一行也拉满」，
-   插件会给 <body> 挂上 cta-justify-last 类名，下面这条就生效。 */
-body.cta-justify-last .canvas-node.cta-card-justify .canvas-node-content :is(p, li),
-body.cta-justify-last .canvas-node.cta-card-justify .canvas-node-content
-  .markdown-source-view.mod-cm6 .cm-line {
-  text-align-last: justify;
-}
+/* ── 两端对齐的最后一行（设置里的开关，★ 只作用于笔记正文） ─────────
+   按排版规范，两端对齐**不拉伸最后一行**。打开设置里的「最后一行也拉满」，
+   插件会给 <body> 挂上 cta-justify-last 类名，下面这条就生效。
+
+   白板侧没有对应的规则了：卡片和标签已经没有两端对齐（理由见 main.js 的
+   ALIGNS 注释），那里的文字常只有一两行，拉满末行也看不出差别。 */
 body.cta-justify-last .cta-note-justify .markdown-preview-view.markdown-rendered :is(p, li) {
   text-align-last: justify;
 }
@@ -271,17 +268,14 @@ body.cta-justify-last .cta-note-justify .markdown-preview-view.markdown-rendered
 .canvas-wrapper .canvas-group-label.cta-group-left    { text-align: left; }
 .canvas-wrapper .canvas-group-label.cta-group-center  { text-align: center; }
 .canvas-wrapper .canvas-group-label.cta-group-right   { text-align: right; }
-.canvas-wrapper .canvas-group-label.cta-group-justify { text-align: justify; }
 
 .canvas-wrapper .canvas-path-label.cta-path-left    { text-align: left; }
 .canvas-wrapper .canvas-path-label.cta-path-center  { text-align: center; }
 .canvas-wrapper .canvas-path-label.cta-path-right   { text-align: right; }
-.canvas-wrapper .canvas-path-label.cta-path-justify { text-align: justify; }
 
 .canvas-wrapper .canvas-node-label.cta-nlabel-left    { text-align: left; }
 .canvas-wrapper .canvas-node-label.cta-nlabel-center  { text-align: center; }
 .canvas-wrapper .canvas-node-label.cta-nlabel-right   { text-align: right; }
-.canvas-wrapper .canvas-node-label.cta-nlabel-justify { text-align: justify; }
 
 /* 卡片垂直对齐只用到 cta-v-* 类名，规则全在 ③ 段，这里不需要重复。 */
 
@@ -310,3 +304,84 @@ body.cta-justify-last .cta-note-justify .markdown-preview-view.markdown-rendered
 .cta-note-justify .markdown-preview-view.markdown-rendered,
 .cta-note-justify .markdown-source-view.mod-cm6 .cm-content,
 .cta-note-justify .markdown-source-view.mod-cm6 .cm-line { text-align: justify; }
+
+/* ═══════════════════════════════════════════ ⑫ 右键九宫格面板 ═════════ */
+
+/* 面板挂在「文本对齐 ▸」的**子菜单**里（item.setSubmenu().dom）。
+   子菜单就是原生 .menu 元素，所以外框、圆角、阴影、定位、贴屏幕边缘的
+   翻转全部由 Obsidian 负责 —— 这里只管面板内部。
+
+   两个必须知道的前提（见 main.js 文件头 ★★）：
+   ① 子菜单里那个 .menu-scroll 是**占位项**所在处。Menu.showAtPosition 开头是
+      `if (0 === this.items.length) return this;`，空子菜单根本不显示，
+      所以我们塞了一个菜单项，再用下面那条把它的显示区藏掉。
+   ② 面板挂在 .menu 本体（.menu-scroll 的兄弟位置），不能塞进滚动区 ——
+      show 时会 sort() → scrollEl.empty() 清空重铺，塞进去会被抹掉。
+
+   每格 = 小图示（两条短线）+ 一个短标签。线的位置就是对齐位置：
+   横向 = 水平，纵向 = 垂直。面板里没有任何解释文字。 */
+
+/* ① 藏掉占位项那一行，只留我们的面板 */
+.menu.cta-grid-menu > .menu-scroll { display: none; }
+
+/* 面板是子菜单的全部内容，给足内边距（.menu 自己的 padding 是 0） */
+.menu.cta-grid-menu > .cta-grid { padding: 8px 10px 9px; }
+
+.cta-grid { min-width: 238px; padding: 6px 8px 7px; }
+
+.cta-grid-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 6px;
+}
+.cta-grid-title { font-size: 12px; color: var(--text-normal); }
+.cta-grid-state { font-size: 11px; color: var(--text-muted); }
+
+.cta-grid-line {
+  height: 1px; margin: 8px 0 7px;
+  background: var(--background-modifier-border);
+}
+
+.cta-grid-row { display: flex; align-items: stretch; gap: 6px; }
+.cta-grid-row + .cta-grid-row { margin-top: 6px; }
+
+/* 行标：九宫格那三行留空，只占位保证三行和下面两行左边缘对齐 */
+.cta-grid-rowhead {
+  flex: 0 0 32px; width: 32px;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; font-size: 11px; line-height: 1.2;
+  color: var(--text-muted);
+}
+
+.cta-grid-cells { flex: 1 1 auto; min-width: 0; display: grid; gap: 6px; }
+.cta-cols-1 { grid-template-columns: 1fr; }
+.cta-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cta-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.cta-grid-cell {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; padding: 6px 2px;
+  font-size: 12px; line-height: 1;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  cursor: default;
+}
+.cta-grid-cell:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+.cta-grid-cell.is-on {
+  color: var(--text-accent);
+  background: var(--background-modifier-active-hover);
+  border-color: var(--interactive-accent);
+}
+/* 「清除」独占一行，横排 */
+.cta-grid-cell.is-wide { flex-direction: row; }
+
+/* 小图示。坐标由 glyphBars() 算，尺寸必须和插件里的 GLYPH_W / GLYPH_H 一致 */
+.cta-glyph { position: relative; width: 22px; height: 16px; }
+.cta-glyph i {
+  position: absolute; height: 2px; border-radius: 1px;
+  background: currentColor; opacity: .75;
+}

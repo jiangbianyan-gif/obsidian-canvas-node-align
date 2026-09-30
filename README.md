@@ -15,10 +15,16 @@ Alignment works on **two independent axes**, so they combine freely:
 
 | Axis | Values | What it controls |
 |---|---|---|
-| **Horizontal** | left / center / right / justify | where each line starts and ends |
+| **Horizontal** | left / center / right | where each line starts and ends |
 | **Vertical** | top / middle / bottom | which height the whole block of text sits at |
 
-That is 4 × 3 = **12 positions**. Stock Canvas gives you one (left + top).
+That is 3 × 3 = **9 positions**. Stock Canvas gives you one (left + top).
+
+> There is no **justify** on the Canvas side: `text-align: justify` only does
+> anything for a paragraph that **wraps onto several lines** (by convention it does
+> not stretch the last line), and card text is usually two or three short lines while
+> labels are a single line — set it and nothing visibly changes. **Markdown note
+> bodies** (real files, paragraphs wrap properly) still offer justify.
 
 ## Features
 
@@ -65,13 +71,32 @@ Obsidian **1.5.0** or newer. Developed and tested on **1.13.7**.
 ## Usage
 
 ### Card text, per card
-Right-click a card →
-- **卡片文字对齐 · 水平** (*Card text alignment · horizontal*) → **左对齐** / **居中** / **右对齐** / **两端对齐** / **清除** (*left / center / right / justify / clear*)
-- **卡片文字对齐 · 垂直** (*Card text alignment · vertical*) → **顶部** / **垂直居中** / **底部** / **清除** (*top / middle / bottom / clear*)
+Right-click a card → **文本对齐** → hover that item (or click it) and a **3 × 3 grid**
+opens beside the menu:
 
-The two menus are independent, and setting one never disturbs the other: pick
-*vertical center*, then change the horizontal alignment, and the card stays
-vertically centred.
+| | left | centre | right |
+|---|---|---|---|
+| **top** | 左上 | 上中 | 右上 |
+| **middle** | 左中 | **正中** | 右中 |
+| **bottom** | 左下 | 下中 | 右下 |
+
+and below it two more rows:
+
+- **居中** (*centre, one axis only*) → **仅水平** / **仅垂直** — change one axis and leave the other exactly as it is.
+- **清除** (*clear*) — both axes back to your defaults.
+
+That is 12 cells covering all 9 combinations (3 horizontal × 3 vertical) plus clear.
+Each cell draws two short lines: their **horizontal** position is the horizontal
+alignment and their **vertical** position is the vertical one, so 正中 has both in
+the middle. The cell currently in effect is highlighted, and the small grey text at
+the top of the panel names it (跟随默认 *follow defaults* when the card has no
+setting of its own).
+
+*文本对齐 is the item this plugin adds. Everything Obsidian already put in that menu
+(edit, duplicate, delete…) is left exactly where it was.*
+
+The two axes stay independent: set 正中, then come back and change only the
+horizontal with 仅水平 — the card stays vertically centred.
 
 Under the hood this inserts small plain-text markers at the end of the card's first line:
 
@@ -86,7 +111,7 @@ Supported markers — one set per axis, two spellings each:
 | horizontal | `<span class="cta-l"></span>` | `#cta-l` | left |
 | horizontal | `<span class="cta-c"></span>` | `#cta-c` | center |
 | horizontal | `<span class="cta-r"></span>` | `#cta-r` | right |
-| horizontal | `<span class="cta-j"></span>` | `#cta-j` | justify |
+| horizontal | `<span class="cta-j"></span>` | `#cta-j` | justify (**retired** on the Canvas side; old files may still carry it) |
 | vertical | `<span class="cta-vt"></span>` | `#cta-vt` | top |
 | vertical | `<span class="cta-vm"></span>` | `#cta-vm` | middle |
 | vertical | `<span class="cta-vb"></span>` | `#cta-vb` | bottom |
@@ -140,7 +165,7 @@ These cannot use a text marker either: the card is displaying **someone else's f
 
 ### Whole canvas at once
 Command palette →
-- **整块白板：所有卡片水平居中** (plus left / right / justify), **整块白板：所有卡片清除水平对齐**
+- **整块白板：所有卡片水平居中** (plus left / right), **整块白板：所有卡片清除水平对齐**
 - **整块白板：所有卡片垂直居中** (plus top / bottom), **整块白板：所有卡片清除垂直对齐**
 
 ### Note bodies
@@ -153,7 +178,7 @@ Settings → Canvas Node Align:
 
 - **Five dropdowns** set the default **horizontal** alignment for each location; anything you have not set individually follows its default column.
 - **Default vertical position for card bodies** — where cards you have never touched vertically put their text.
-- **Stretch the last line when justifying** — see the note under *Known limitations*.
+- **Stretch the last line when justifying** — only affects note bodies, see the note under *Known limitations*.
 - A button to clear all per-item settings.
 
 ## Why the file format stays clean
@@ -198,7 +223,7 @@ Every call is feature-detected or wrapped in a fallback, so a rename in a future
 - Card-label text alignment only becomes visible once the label is wider than its text, which is why `styles.css` gives `.canvas-node-label` `width: 100%`. As a side effect, very long file names are ellipsised instead of overflowing.
 - Note-body alignment in Live Preview moves the syntax marks along with the text; Reading view is cleaner.
 - Horizontal alignment applies in the rendered (preview) state of a card. While you are editing a card, its content is CodeMirror source and the marker has not been rendered yet, so that card falls back to the default. Click an empty area of the canvas to leave edit mode and see the result. Vertical alignment is **only** applied in the rendered state — deliberately, because a caret that jumps around the card while you type is unpleasant.
-- **`justify` only stretches the lines that are *not* the last one**, as per typographic convention. A short single-line card therefore looks identical under `justify` and `left` — the alignment did apply, there was simply nothing to stretch. Turn on *stretch the last line when justifying* in the settings tab if you want short text to stretch too.
+- There is **no justify on the Canvas side**: `text-align: justify` only stretches the lines that are *not* the last one, and card text is short while labels are a single line, so it made no visible difference. Use it on **Markdown note bodies** instead; the *stretch the last line* toggle in the settings tab applies to notes only.
 - Vertical middle/bottom are only visible when the card is **taller than its text**. Card height hugs its content by default, so drag the card a bit taller first.
 
 ## Development

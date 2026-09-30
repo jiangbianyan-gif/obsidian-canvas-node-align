@@ -1,6 +1,6 @@
 {
   "name": "obsidian-canvas-node-align",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Align text inside Obsidian Canvas cards, group labels, edge labels and card labels, plus Markdown note bodies.",
   "author": "jiangbianyan-gif",
   "license": "MIT",

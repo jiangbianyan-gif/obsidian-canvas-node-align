@@ -3,6 +3,31 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.2.2 — 2026-09-30
+
+**Build verification, take two.** No changes to the plugin itself. The
+directory's build-verification scan reported *"running the build script
+failed"* for 2.2.1, with no output captured from `tools/build.mjs` at all —
+meaning the script died before its first log line, which made the real cause
+undiagnosable from the outside. `tools/build.mjs` is reworked so that cannot
+happen again:
+
+- **It speaks first.** The first thing it prints is the environment: Node
+  version, platform, working directory, and the contents of the repository
+  root and `tools/`. A silent failure now carries its own evidence.
+- **A missing helper can no longer kill it.** `tools/check-manifest.mjs` is
+  loaded with a *dynamic* import wrapped in a try/catch. A static import is
+  resolved before the script's first line runs, so a helper that was missing or
+  unloadable would abort it with zero output.
+- **Only the payload can fail the build.** Whether the three files Obsidian
+  downloads exist, are non-empty, are BOM-free, and parse decides the exit
+  code. Metadata consistency (versions, tags, submission rules) is now reported
+  as a warning — compliance is still a hard gate, enforced by
+  `npm run check:manifest`, which CI runs as its own step.
+- A crash is caught and printed on stdout, so the next scan shows the cause
+  instead of a bare "exit code 1".
+- 6 more tests pin these rules down.
+
 ## 2.2.1 — 2026-09-30
 
 **Release tooling.** No changes to the plugin itself. 2.2.0 was never

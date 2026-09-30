@@ -112,6 +112,10 @@ try {
   /* ---------------- tools/build.mjs must stay self-contained ---------- */
 
   const buildSrc = fs.readFileSync(path.join(ROOT, 'tools', 'build.mjs'), 'utf8');
+  // Comments are stripped before the source-scanning guards below: the header
+  // explains *why* spawning is avoided, and that prose must not trip a guard
+  // that is looking for the call itself.
+  const buildCode = buildSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 
   const bareImports = [...buildSrc.matchAll(/(?:from|import)\s+['"]([^'"]+)['"]/g)]
     .map((m) => m[1])
@@ -123,7 +127,7 @@ try {
   );
 
   ok(
-    !/child_process|spawnSync|execFileSync|execSync/.test(buildSrc),
+    !/child_process|spawnSync|execFileSync|execSync/.test(buildCode),
     'tools/build.mjs never spawns another process (spawnSync on process.execPath fails with EBUSY on Windows)'
   );
 
@@ -135,6 +139,33 @@ try {
   ok(
     /validateManifest/.test(buildSrc),
     'tools/build.mjs reuses the metadata rules instead of duplicating them'
+  );
+
+  /* the scan runs it in an environment we cannot see - see the header comment */
+
+  ok(
+    /console\.log\([^\n]*process\.version/.test(buildSrc),
+    'tools/build.mjs logs the environment (Node version) before any check, so a silent failure is impossible'
+  );
+
+  ok(
+    /await import\(/.test(buildSrc) && !/^import\s[^\n]*check-manifest/m.test(buildSrc),
+    'tools/build.mjs loads tools/check-manifest.mjs with a dynamic import, so a missing helper cannot kill it before it prints anything'
+  );
+
+  ok(
+    /run\(\)\.then\(finish,\s*\(err\)/.test(buildSrc),
+    'tools/build.mjs catches a crash and still reports it on stdout'
+  );
+
+  ok(
+    /warn\('metadata: '/.test(buildSrc),
+    'metadata problems are warnings in the build - only the payload may fail it'
+  );
+
+  ok(
+    /const problems = \[\];/.test(buildSrc) && /const warnings = \[\];/.test(buildSrc),
+    'tools/build.mjs separates payload problems (fail) from everything else (warn)'
   );
 
   /* the build must be read-only with respect to the release payload */

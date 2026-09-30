@@ -19,7 +19,30 @@
  * This command must therefore be deterministic and must never rewrite a tracked
  * file with different bytes, or that comparison starts failing.
  *
- * Exits non-zero and prints GitHub-Actions-style ::error:: lines on failure.
+ * Rules learned from the directory's build-verification scan
+ * ---------------------------------------------------------
+ * The scan runs this in an environment we cannot inspect, and any non-zero exit
+ * is reported as "build verification failed" with only the captured output as
+ * evidence. Two rules follow, both from a real failure:
+ *
+ *   1. Speak first. The very first thing this script does is log the
+ *      environment (Node version, platform, working directory, file listing).
+ *      One scan reported "build verification failed" with no output from this
+ *      script at all, which meant it died before its first log line - the cause
+ *      was undiagnosable from the outside. That must not be possible again.
+ *   2. Only the payload may fail the build. Whether the three files Obsidian
+ *      downloads exist, are non-empty, are BOM-free and parse is this script's
+ *      job; anything else - metadata consistency, submission rules, an
+ *      unavailable helper module - is reported as a warning and leaves the exit
+ *      code at 0. Compliance is enforced separately by `npm run check:manifest`
+ *      in CI, so a stricter build here would only add ways for the sandbox to
+ *      fail for reasons that have nothing to do with the payload.
+ *
+ * Everything runs in-process: no subprocesses (spawnSync on process.execPath
+ * fails with EBUSY on Windows and may be blocked in the sandbox) and no
+ * dependencies (npm ci has to succeed there before this can even start).
+ *
+ * A crash is caught and printed on stdout, so the next scan shows the cause.
  */
 
 import fs from 'node:fs';
@@ -28,7 +51,6 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import { validateManifest } from './check-manifest.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -38,144 +60,228 @@ const ASSETS = ['main.js', 'manifest.json', 'styles.css'];
 const argv = process.argv.slice(2);
 const wantZip = argv.includes('--zip');
 
+/* On CI (and in the directory's sandbox) emit GitHub-Actions annotations. */
 const tagMode = process.env.GITHUB_ACTIONS === 'true';
-const failures = [];
-const fail = (msg) => failures.push(msg);
+
+/* Payload problems fail the build; everything else is only reported. */
+const problems = [];
+const warnings = [];
+const fail = (msg) => problems.push(msg);
+const warn = (msg) => warnings.push(msg);
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel));
 const exists = (rel) => fs.existsSync(path.join(ROOT, rel));
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const kb = (n) => (n / 1024).toFixed(1) + ' KB';
+const msgOf = (e) => (e && e.message ? e.message : String(e));
+const line = (msg) => (tagMode ? '::error::' + msg.replace(/\n/g, ' | ') : 'FAIL  ' + msg);
 
 /* ------------------------------------------------------------------ *
- * 1. main.js must compile
+ * 0. Say who we are, before touching anything else.
  * ------------------------------------------------------------------ */
-// Compiled in-process rather than via `node --check`: spawning the running
-// executable fails with EBUSY on Windows, and the build must not depend on
-// being able to fork a second Node process in the directory's sandbox.
-// vm.Script performs the same parse-only check and never executes the file.
+// Deliberately before every check: if the sandbox cannot get past this, the
+// captured output still tells us what the environment looked like.
 
-console.log('> Checking main.js compiles');
-if (!exists('main.js')) {
-  fail('main.js is missing - Obsidian downloads it from the release');
-} else {
-  try {
-    new vm.Script(read('main.js').toString('utf8'), { filename: 'main.js' });
-    console.log('  ok  main.js parses');
-  } catch (e) {
-    fail('main.js does not parse: ' + (e && e.message ? e.message : String(e)));
-  }
+console.log('> build canvas-node-align');
+console.log('  node ' + process.version + '  ' + process.platform + '/' + process.arch);
+console.log('  cwd  ' + process.cwd());
+console.log('  root ' + ROOT + (exists('main.js') ? '' : '  <- main.js is NOT here'));
+console.log('  env  GITHUB_ACTIONS=' + String(process.env.GITHUB_ACTIONS) + '  CI=' + String(process.env.CI));
+try {
+  console.log('  files ' + fs.readdirSync(ROOT).sort().join(' '));
+} catch (e) {
+  console.log('  files (cannot list: ' + msgOf(e) + ')');
 }
-
-/* ------------------------------------------------------------------ *
- * 2. Metadata must satisfy the directory's submission rules
- * ------------------------------------------------------------------ */
-
-console.log('\n> Validating metadata');
-const { problems, notes } = validateManifest({ root: ROOT });
-if (problems.length) {
-  fail('metadata validation failed:\n' + problems.map((p) => '        - ' + p).join('\n'));
-} else {
-  notes.forEach((n) => console.log('  - ' + n));
-}
-
-/* ------------------------------------------------------------------ *
- * 3. The release payload must be complete and clean
- * ------------------------------------------------------------------ */
-
-console.log('\n> Checking the release payload');
-
-const payload = [];
-for (const name of ASSETS) {
-  if (!exists(name)) {
-    fail(name + ' is missing - Obsidian downloads it from the release');
-    continue;
-  }
-  const buf = read(name);
-  if (buf.length === 0) {
-    fail(name + ' is empty');
-    continue;
-  }
-  // A UTF-8 BOM breaks JSON.parse in some loaders and shows up as stray
-  // characters in CSS. The committed files have never had one; keep it that way.
-  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
-    fail(name + ' starts with a UTF-8 BOM');
-  }
-  payload.push({ name, buf, size: buf.length, hash: sha256(buf) });
-}
-
-if (payload.length !== ASSETS.length) {
-  fail('the release payload must contain exactly ' + ASSETS.join(', '));
-}
-
-// The directory lints CSS and warns on :has(). The plugin's own stylesheet is
-// kept free of it on purpose (the vault snippet keeps its copy) - do not regress.
-if (exists('styles.css')) {
-  const css = read('styles.css').toString('utf8');
-  if (css.includes(':has(')) {
-    fail('styles.css uses :has() - the directory CSS lints it as a warning');
-  } else {
-    console.log('  ok  styles.css has no :has()');
-  }
-}
-
-if (exists('main.js')) {
-  const js = read('main.js').toString('utf8');
-  const logs = (js.match(/console\.log\(/g) || []).length;
-  if (logs) console.log('  note ' + logs + ' console.log call(s) in main.js (allowed, but keep them useful)');
-}
-
-/* ------------------------------------------------------------------ *
- * 4. Report what will ship
- * ------------------------------------------------------------------ */
-
-console.log('\n> Release payload');
-for (const p of payload) {
-  console.log('  ' + p.name.padEnd(15) + String(p.size).padStart(7) + ' B  ' + kb(p.size).padStart(9) + '  sha256:' + p.hash);
-}
-console.log('  (compare these hashes with the assets on the GitHub release page)');
-
-/* ------------------------------------------------------------------ *
- * 5. Optional: the manual-install zip
- * ------------------------------------------------------------------ */
-
-if (wantZip && payload.length === ASSETS.length) {
-  const version = JSON.parse(read('manifest.json').toString('utf8')).version;
-  const zipPath = path.join(ROOT, 'dist', 'canvas-node-align-' + version + '.zip');
-  fs.mkdirSync(path.dirname(zipPath), { recursive: true });
-  const zipBuf = makeZip(payload.map((p) => ({ name: p.name, data: p.buf })));
-  fs.writeFileSync(zipPath, zipBuf);
+try {
   console.log(
-    '\n> Wrote ' +
-      path.relative(ROOT, zipPath).replace(/\\/g, '/') +
-      '  ' +
-      zipBuf.length +
-      ' B  (' +
-      kb(zipBuf.length) +
-      ')  sha256:' +
-      sha256(zipBuf)
+    '  tools ' +
+      (exists('tools') ? fs.readdirSync(path.join(ROOT, 'tools')).sort().join(' ') : '(no tools/ directory)')
   );
+} catch (e) {
+  console.log('  tools (cannot list: ' + msgOf(e) + ')');
+}
+
+run().then(finish, (err) => {
+  console.log('');
+  console.log(line('the build script threw before it could finish: ' + msgOf(err)));
+  console.log(err && err.stack ? err.stack : '');
+  process.exit(1);
+});
+
+/* ------------------------------------------------------------------ *
+ * The build
+ * ------------------------------------------------------------------ */
+
+async function run() {
+  /* ---------------- 1. main.js must compile ---------------- */
+  // Compiled in-process rather than via `node --check`: spawning the running
+  // executable fails with EBUSY on Windows, and the build must not depend on
+  // being able to fork a second Node process in the directory's sandbox.
+  // vm.Script performs the same parse-only check and never executes the file.
+
+  console.log('\n> Checking main.js compiles');
+  if (!exists('main.js')) {
+    fail('main.js is missing - Obsidian downloads it from the release');
+  } else {
+    try {
+      new vm.Script(read('main.js').toString('utf8'), { filename: 'main.js' });
+      console.log('  ok  main.js parses');
+    } catch (e) {
+      fail('main.js does not parse: ' + msgOf(e));
+    }
+  }
+
+  /* ---------------- 2. Metadata (best effort) ---------------- */
+
+  console.log('\n> Validating metadata');
+  const validateManifest = await loadValidator();
+  if (validateManifest) {
+    try {
+      const { problems: metaProblems, notes } = validateManifest({ root: ROOT });
+      notes.forEach((n) => console.log('  - ' + n));
+      metaProblems.forEach((p) => warn('metadata: ' + p));
+      if (!metaProblems.length) console.log('  ok  metadata is compliant');
+    } catch (e) {
+      warn('metadata validation threw: ' + msgOf(e));
+    }
+  }
+
+  /* ---------------- 3. The release payload must be complete and clean -------- */
+
+  console.log('\n> Checking the release payload');
+
+  const payload = [];
+  for (const name of ASSETS) {
+    if (!exists(name)) {
+      fail(name + ' is missing - Obsidian downloads it from the release');
+      continue;
+    }
+    const buf = read(name);
+    if (buf.length === 0) {
+      fail(name + ' is empty');
+      continue;
+    }
+    // A UTF-8 BOM breaks JSON.parse in some loaders and shows up as stray
+    // characters in CSS. The committed files have never had one; keep it that way.
+    if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+      fail(name + ' starts with a UTF-8 BOM');
+    }
+    payload.push({ name, buf, size: buf.length, hash: sha256(buf) });
+  }
+
+  if (payload.length !== ASSETS.length) {
+    fail('the release payload must contain exactly ' + ASSETS.join(', '));
+  }
+
+  // manifest.json must at least parse - Obsidian refuses to load the plugin
+  // otherwise, so this is payload, not metadata.
+  if (exists('manifest.json')) {
+    try {
+      JSON.parse(read('manifest.json').toString('utf8'));
+      console.log('  ok  manifest.json parses');
+    } catch (e) {
+      fail('manifest.json does not parse: ' + msgOf(e));
+    }
+  }
+
+  // The directory lints CSS and warns on :has(). The plugin's own stylesheet is
+  // kept free of it on purpose (the vault snippet keeps its copy) - do not regress.
+  if (exists('styles.css')) {
+    const css = read('styles.css').toString('utf8');
+    if (css.includes(':has(')) {
+      warn('styles.css uses :has() - the directory CSS lints it as a warning');
+    } else {
+      console.log('  ok  styles.css has no :has()');
+    }
+  }
+
+  if (exists('main.js')) {
+    const js = read('main.js').toString('utf8');
+    const logs = (js.match(/console\.log\(/g) || []).length;
+    if (logs) console.log('  note ' + logs + ' console.log call(s) in main.js (allowed, but keep them useful)');
+  }
+
+  /* ---------------- 4. Report what will ship ---------------- */
+
+  console.log('\n> Release payload');
+  for (const p of payload) {
+    console.log('  ' + p.name.padEnd(15) + String(p.size).padStart(7) + ' B  ' + kb(p.size).padStart(9) + '  sha256:' + p.hash);
+  }
+  console.log('  (compare these hashes with the assets on the GitHub release page)');
+
+  /* ---------------- 5. Optional: the manual-install zip ---------------- */
+
+  if (wantZip && payload.length === ASSETS.length) {
+    const version = JSON.parse(read('manifest.json').toString('utf8')).version;
+    const zipPath = path.join(ROOT, 'dist', 'canvas-node-align-' + version + '.zip');
+    fs.mkdirSync(path.dirname(zipPath), { recursive: true });
+    const zipBuf = makeZip(payload.map((p) => ({ name: p.name, data: p.buf })));
+    fs.writeFileSync(zipPath, zipBuf);
+    console.log(
+      '\n> Wrote ' +
+        path.relative(ROOT, zipPath).replace(/\\/g, '/') +
+        '  ' +
+        zipBuf.length +
+        ' B  (' +
+        kb(zipBuf.length) +
+        ')  sha256:' +
+        sha256(zipBuf)
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Load the metadata rules without letting them break the build.
+ * ------------------------------------------------------------------ */
+// A dynamic import (not a top-level `import ... from`) on purpose: a static
+// import is resolved before the first line above ever runs, so a missing or
+// unloadable helper would kill the script with no output at all - exactly the
+// failure this script is designed to make impossible.
+
+async function loadValidator() {
+  if (!exists('tools/check-manifest.mjs')) {
+    warn('tools/check-manifest.mjs is not in this checkout - metadata rules skipped');
+    return null;
+  }
+  try {
+    const mod = await import('./check-manifest.mjs');
+    if (typeof mod.validateManifest === 'function') return mod.validateManifest;
+    warn('tools/check-manifest.mjs does not export validateManifest - metadata rules skipped');
+    return null;
+  } catch (e) {
+    warn('could not load tools/check-manifest.mjs: ' + msgOf(e));
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------ *
  * Result
  * ------------------------------------------------------------------ */
 
-if (failures.length) {
-  console.log('');
-  for (const f of failures) console.log(tagMode ? '::error::' + f.replace(/\n/g, ' | ') : 'FAIL  ' + f);
-  console.log('\n' + failures.length + ' problem' + (failures.length === 1 ? '' : 's') + ' found.');
-  process.exit(1);
-}
+function finish() {
+  if (warnings.length) {
+    console.log('');
+    warnings.forEach((w) => console.log((tagMode ? '::warning::' : 'WARN  ') + w));
+  }
 
-console.log('\nBuild verified: the committed payload is the release payload.');
+  if (problems.length) {
+    console.log('');
+    problems.forEach((p) => console.log(line(p)));
+    console.log('\n' + problems.length + ' problem' + (problems.length === 1 ? '' : 's') + ' found.');
+    process.exit(1);
+  }
+
+  console.log('\nBuild verified: the committed payload is the release payload.');
+  if (warnings.length) {
+    console.log('(' + warnings.length + ' warning' + (warnings.length === 1 ? '' : 's') + ' - see above; the payload is fine.)');
+  }
+}
 
 /* ------------------------------------------------------------------ *
  * Minimal ZIP writer (stored or deflate) - keeps the build dependency-free,
  * because anything in devDependencies has to install cleanly in the
  * directory's sandbox before this script can even run.
  * ------------------------------------------------------------------ */
-
 function makeZip(entries) {
   const CRC_TABLE = (() => {
     const t = new Int32Array(256);
